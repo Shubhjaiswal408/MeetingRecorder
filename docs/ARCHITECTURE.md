@@ -11,8 +11,8 @@ audio capture, the web UI, and slow HTTP calls never block each other.
 │   recordTask (prio 2)                          │  │   webTask     (prio 3)  ← keeps UI responsive  │
 │   ─ PDM mic → 15 s WAV chunks                  │  │   ─ server.handleClient() on a tight loop      │
 │   ─ Writes to SD: /meetings/<ts>/chunkNN.wav   │  │                                                │
-│   ─ Signals chunkReady via chunkMutex          │  │   processTask (prio 1)                         │
-│                                                │  │   ─ Waits on chunkReady                        │
+│   ─ Posts WAV path to chunkQueue (8 slots)     │  │   processTask (prio 1)                         │
+│                                                │  │   ─ Receives from chunkQueue                   │
 │                                                │  │   ─ POSTs WAV to ElevenLabs (STT)              │
 │                                                │  │   ─ Appends to fullTranscript                  │
 │                                                │  │   ─ POSTs to OpenAI for rolling summary        │
@@ -43,7 +43,7 @@ Why this split?
           ▼
    recordTask (Core 0) ──── 15 s WAV ────► /meetings/<ts>/chunkNN.wav
           │
-          │ chunkReady = true
+          │ xQueueSend(chunkQueue, path)   ← up to 8 paths buffered
           ▼
    processTask (Core 1)
           │
@@ -77,17 +77,18 @@ Categories:
 
 - **Credentials** — `wifiSSID`, `wifiPass`, `elApiKey`, `openaiApiKey`,
   `apSSID`, `apPass`. Loaded from `/config.json` at boot, rewritable via UI.
-- **Meeting state** — `meetingActive`, `chunkReady`, `finalStop`,
-  `currentChunkPath`, `meetingDir`, `fullTranscript`, `rollingSummary`,
-  `chunkIndex`, `wordCount`.
+- **Meeting state** — `meetingActive`, `finalStop`, `meetingDir`,
+  `fullTranscript`, `rollingSummary`, `chunkIndex`, `wordCount`.
+- **Chunk queue** — `chunkQueue` (8-slot FreeRTOS queue of WAV paths). Replaces
+  the old single-slot `chunkReady` / `currentChunkPath` pair; prevents chunk
+  loss when STT retries take longer than a single 15 s recording window.
 - **Time** — `meetingTimestamp`, `meetingDisplayTime`, `ntpSynced`,
   `meetingStartEpoch`.
-- **RTOS handles** — `recordTaskHandle`, `processTaskHandle`, `chunkMutex`,
-  `rx_handle`.
+- **RTOS handles** — `recordTaskHandle`, `processTaskHandle`, `rx_handle`.
 - **Web server** — `server` (port 80).
 
 `volatile` is used for flags read by one task and written by another;
-`chunkMutex` guards the chunk handoff between `recordTask` and `processTask`.
+`stateMutex` guards transcript/summary Strings between processTask and webTask.
 
 ---
 

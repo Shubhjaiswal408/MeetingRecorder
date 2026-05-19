@@ -63,12 +63,13 @@ String apPass = AP_PASS_DEFAULT;
 
 // Core meeting state
 volatile bool meetingActive     = false;
-volatile bool chunkReady        = false;
 volatile bool finalStop         = false;
 volatile bool needWifiReconnect = false;
 volatile bool needApRestart     = false;   // set when AP SSID/pass changed via UI
 
-String currentChunkPath    = "";
+// Chunk queue — replaces single-slot chunkReady/currentChunkPath.
+// Defined extern in globals.h; created in setup().
+QueueHandle_t chunkQueue;
 String meetingDir          = "";
 String fullTranscript      = "";
 String finalTranscriptText = "";   // ← FIX Bug 4: was missing, caused linker error
@@ -86,7 +87,6 @@ time_t meetingStartEpoch  = 0;     // ← FIX Bug 4
 // RTOS handles
 TaskHandle_t      recordTaskHandle;
 TaskHandle_t      processTaskHandle;
-SemaphoreHandle_t chunkMutex;
 SemaphoreHandle_t stateMutex;
 i2s_chan_handle_t rx_handle = NULL;
 
@@ -168,9 +168,11 @@ void setup() {
         Serial.println("[Setup] No WiFi — open http://192.168.4.1/setup");
     }
 
-    chunkMutex = xSemaphoreCreateMutex();
     stateMutex = xSemaphoreCreateMutex();
-    if (!chunkMutex || !stateMutex) { Serial.println("[Setup] Mutex FAILED"); while (1); }
+    if (!stateMutex) { Serial.println("[Setup] stateMutex FAILED"); while (1); }
+
+    chunkQueue = xQueueCreate(CHUNK_QUEUE_SIZE, CHUNK_PATH_LEN);
+    if (!chunkQueue) { Serial.println("[Setup] chunkQueue FAILED"); while (1); }
 
     createMeetingDir();
     startWebServer();
@@ -243,7 +245,7 @@ void loop() {
             rollingSummary     = "Meeting started — summary appears after first chunk.";
             finalSummaryText   = "";
             xSemaphoreGive(stateMutex);
-            chunkReady         = false;
+            xQueueReset(chunkQueue);   // discard any leftover chunk paths
             finalStop          = false;
             stampNow();
             meetingActive      = true;

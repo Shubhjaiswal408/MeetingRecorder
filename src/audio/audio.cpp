@@ -143,11 +143,17 @@ void recordTask(void* pv) {
         Serial.printf("[RecordTask] Chunk %d done: %u bytes audio\n", chunkIndex, totalBytes);
         if (totalBytes == 0) Serial.println("[RecordTask] WARNING: zero bytes — mic issue?");
 
-        // Signal processTask
-        xSemaphoreTake(chunkMutex, portMAX_DELAY);
-        currentChunkPath = wavPath;
-        chunkReady       = true;
-        xSemaphoreGive(chunkMutex);
+        // Enqueue path for processTask.
+        // xQueueSend is non-blocking (timeout=0) — if the queue is full after
+        // CHUNK_QUEUE_SIZE back-logged chunks, we warn and drop this one.
+        // That only happens after >2 continuous minutes of STT failures, which
+        // would already mean the transcript is hopelessly stale.
+        char pathBuf[CHUNK_PATH_LEN];
+        strncpy(pathBuf, wavPath.c_str(), CHUNK_PATH_LEN - 1);
+        pathBuf[CHUNK_PATH_LEN - 1] = '\0';
+        if (xQueueSend(chunkQueue, pathBuf, 0) != pdTRUE) {
+            Serial.println("[RecordTask] WARNING: chunk queue full — chunk dropped!");
+        }
 
         chunkIndex++;
         vTaskDelay(10 / portTICK_PERIOD_MS);

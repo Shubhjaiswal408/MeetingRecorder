@@ -58,7 +58,7 @@ static void handleApiStart() {
         wordCount           = 0;
         rollingSummary      = "Meeting started — summary will appear after the first chunk.";
         xSemaphoreGive(stateMutex);
-        chunkReady          = false;
+        xQueueReset(chunkQueue);   // discard any leftover chunk paths
         finalStop           = false;
         createMeetingDir();
         meetingActive       = true;

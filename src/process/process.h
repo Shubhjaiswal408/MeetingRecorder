@@ -10,8 +10,8 @@
  */
 
 // FreeRTOS task — pin to Core 1.
-// Waits for chunkReady signal, transcribes audio, updates
-// rollingSummary.  On finalStop generates the final summary.
+// Receives WAV paths from chunkQueue, transcribes audio, updates
+// rollingSummary.  On finalStop drains the queue then generates the final summary.
 void processTask(void* pv);
 
 // Create a new timestamped meeting directory on the SD card.

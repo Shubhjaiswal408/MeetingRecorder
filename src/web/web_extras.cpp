@@ -49,7 +49,6 @@ void handleApiStatus() {
     //    .remove() in-flight can let us read freed memory here.
     String snapTranscript, snapRolling, snapFinal, snapFinalTrans;
     int    snapChunks, snapWords;
-    bool   snapChunkReady;
     xSemaphoreTake(stateMutex, portMAX_DELAY);
     // Trim while we hold the lock — substring() reads must be atomic w/ the source
     int tStart  = max(0, (int)fullTranscript.length()      - 1200);
@@ -60,8 +59,9 @@ void handleApiStatus() {
     snapFinal       = finalSummaryText;
     snapChunks      = chunkIndex;
     snapWords       = wordCount;
-    snapChunkReady  = chunkReady;
     xSemaphoreGive(stateMutex);
+    // Queue count is its own atomic read — no need to hold stateMutex.
+    bool snapChunkReady = (uxQueueMessagesWaiting(chunkQueue) > 0);
 
     // ── Snapshots beyond the lock are fine: network + scalars are independent
     String meetingStr = meetingActive ? "true" : "false";
