@@ -58,6 +58,81 @@ void createMeetingDir() {
                   meetingDir.c_str(), ok ? "OK" : "FAIL");
 }
 
+// ─── readFullTranscriptFromSD ────────────────────────────────────────────────
+// The in-RAM `fullTranscript` is trimmed at MAX_TRANSCRIPT_RAM (12 KB) so the
+// live UI doesn't blow up memory on long meetings.  That trim used to also
+// silently truncate the final-summary input, which is why 40-minute meetings
+// were getting summaries that only covered the LAST 10-12 minutes.
+//
+// Now: every chunk transcript is appended to `full_transcript.txt` on the SD
+// card (see the FILE_APPEND write in processTask).  At final-summary time we
+// read that complete file and pass it to GPT instead of the trimmed in-RAM
+// version, so the whole meeting is summarised — not just the tail.
+//
+// For very long meetings (>60 KB transcript, roughly >80 minutes), we keep
+// the first 30 KB + last 30 KB joined with a clearly marked elision in the
+// middle.  This preserves both the opening context and the closing decisions
+// while staying within ESP32 RAM and OpenAI request-size budgets.
+static String readFullTranscriptFromSD(const String& dir) {
+    String result;
+    String path = dir + "/full_transcript.txt";
+    File f = SD.open(path.c_str(), FILE_READ);
+    if (!f) {
+        Serial.println("[ProcessTask] full_transcript.txt missing on SD — falling back to in-RAM transcript");
+        return result;
+    }
+
+    size_t fsize = f.size();
+    Serial.printf("[ProcessTask] full_transcript.txt = %u bytes on SD\n", (unsigned)fsize);
+
+    const size_t SOFT_CAP = 60000;       // ≈ 75-80 min of typical speech
+    const size_t HEAD_KEEP = 30000;
+    const size_t TAIL_KEEP = 30000;
+
+    char buf[256];
+
+    if (fsize <= SOFT_CAP) {
+        result.reserve(fsize + 1);
+        while (f.available()) {
+            int n = f.readBytes(buf, sizeof(buf) - 1);
+            if (n <= 0) break;
+            buf[n] = '\0';
+            result += buf;
+        }
+    } else {
+        // Long meeting — keep both ends, elide the middle.
+        Serial.printf("[ProcessTask] Transcript > %u KB — keeping head + tail, eliding middle\n",
+                      (unsigned)(SOFT_CAP / 1024));
+        result.reserve(HEAD_KEEP + TAIL_KEEP + 200);
+
+        // Read first HEAD_KEEP bytes
+        size_t got = 0;
+        while (f.available() && got < HEAD_KEEP) {
+            size_t want = min((size_t)sizeof(buf) - 1, HEAD_KEEP - got);
+            int n = f.readBytes(buf, want);
+            if (n <= 0) break;
+            buf[n] = '\0';
+            result += buf;
+            got += n;
+        }
+
+        result += "\n\n[ ... middle portion of the transcript omitted to keep the summary request within size limits — the meeting continued without interruption ... ]\n\n";
+
+        // Seek to (fsize - TAIL_KEEP) and read to end
+        f.seek(fsize - TAIL_KEEP);
+        while (f.available()) {
+            int n = f.readBytes(buf, sizeof(buf) - 1);
+            if (n <= 0) break;
+            buf[n] = '\0';
+            result += buf;
+        }
+    }
+    f.close();
+
+    Serial.printf("[ProcessTask] Loaded %u chars from SD transcript\n", (unsigned)result.length());
+    return result;
+}
+
 // ─── saveSummaryToSD — always writes summary_final.txt ───────────────────────
 // This is the filename the /api/history endpoint reads.
 // Also writes a timestamped copy for human browsing on the card.
@@ -145,9 +220,17 @@ void processTask(void* pv) {
                     curWordCount   = wordCount;
                     xSemaphoreGive(stateMutex);
 
-                    // Slow I/O outside the lock — uses snapshot, not the live String
-                    File ff = SD.open(meetingDir + "/full_transcript.txt", FILE_WRITE);
-                    if (ff) { ff.print(transcriptSnap); ff.close(); }
+                    // APPEND just this chunk's transcript to the running full file.
+                    // FILE_APPEND opens in "a" mode so the file grows naturally
+                    // chunk-by-chunk and stays complete even when the in-RAM
+                    // `fullTranscript` gets trimmed for memory.  This is what
+                    // the final-summary step reads back.
+                    File ff = SD.open(meetingDir + "/full_transcript.txt", FILE_APPEND);
+                    if (ff) {
+                        ff.print(transcript);
+                        ff.print('\n');
+                        ff.close();
+                    }
 
                     // Rolling summary (only after 20+ words to avoid trivial summaries)
                     if (curWordCount >= 20) {
@@ -183,14 +266,29 @@ void processTask(void* pv) {
             finalStop = false;
             Serial.println("\n[ProcessTask] Meeting stopped — generating FINAL summary...");
 
-            // Snapshot the transcript under lock, then do slow HTTP outside it.
-            String transcriptSnap;
+            // CRITICAL: read the COMPLETE transcript from SD, not the trimmed
+            // in-RAM one.  The in-RAM `fullTranscript` is capped at
+            // MAX_TRANSCRIPT_RAM (12 KB) so a 40-minute meeting loses its first
+            // 30 minutes from RAM — but SD has the full thing.
+            String transcriptSnap = readFullTranscriptFromSD(meetingDir);
+
+            // Fallback to in-RAM version if SD read failed for any reason
+            // (card pulled, file corruption, etc.) so we still produce SOMETHING.
+            if (transcriptSnap.length() < 10) {
+                Serial.println("[ProcessTask] SD transcript unusable — falling back to in-RAM (last ~12 KB only)");
+                xSemaphoreTake(stateMutex, portMAX_DELAY);
+                transcriptSnap = fullTranscript;
+                xSemaphoreGive(stateMutex);
+            }
+
+            // Store the full transcript for the UI's Transcript tab.
             xSemaphoreTake(stateMutex, portMAX_DELAY);
-            finalTranscriptText = fullTranscript;   // freeze for the UI before reset
-            transcriptSnap      = fullTranscript;
+            finalTranscriptText = transcriptSnap;
             xSemaphoreGive(stateMutex);
 
             if (transcriptSnap.length() > 10) {
+                Serial.printf("[ProcessTask] Sending %u chars to GPT for final summary\n",
+                              (unsigned)transcriptSnap.length());
                 String finalSum = generateSummary(transcriptSnap, true);
 
                 bool valid = finalSum.length() > 80

@@ -721,10 +721,13 @@ function updateUI(d){
     var sm=document.getElementById('sumMeta');sm.style.display='none';sm.textContent='';
   }
 
-  /* rolling summary */
+  /* rolling summary — render markdown so bold/lists look the same as Summary tab */
   if(d.rollingSummary&&d.rollingSummary.trim().length>2){
     var sl=document.getElementById('sumLive');
-    if(sl.textContent!==d.rollingSummary) sl.textContent=d.rollingSummary;
+    if(sl.dataset.src!==d.rollingSummary){
+      sl.dataset.src=d.rollingSummary;
+      sl.innerHTML=renderMd(d.rollingSummary)||esc(d.rollingSummary);
+    }
   }
 
   /* ── Transcript tab logic ── */
