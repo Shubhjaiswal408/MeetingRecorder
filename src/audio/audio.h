@@ -19,5 +19,5 @@ void generateWavHeader(uint8_t* h, uint32_t dataBytes);
 
 // FreeRTOS task — pin to Core 0.
 // Continuously captures audio into 15-second WAV chunks on the SD
-// card and signals processTask via chunkMutex when each chunk is done.
+// card and posts each WAV path to chunkQueue when each chunk is done.
 void recordTask(void* pv);

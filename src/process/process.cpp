@@ -80,16 +80,14 @@ void processTask(void* pv) {
 
     for (;;) {
         // ── 1. Pick up a ready chunk ────────────────────────────────────────
+        // Block for up to 100 ms so the task yields instead of spin-polling.
+        // xQueueReceive is thread-safe — no extra mutex needed.
         bool   doProcess = false;
         String path      = "";
-
-        if (xSemaphoreTake(chunkMutex, 0) == pdTRUE) {
-            if (chunkReady) {
-                path       = currentChunkPath;
-                chunkReady = false;
-                doProcess  = true;
-            }
-            xSemaphoreGive(chunkMutex);
+        char   pathBuf[CHUNK_PATH_LEN];
+        if (xQueueReceive(chunkQueue, pathBuf, pdMS_TO_TICKS(100)) == pdTRUE) {
+            path      = String(pathBuf);
+            doProcess = true;
         }
 
         // ── 2. Process chunk ────────────────────────────────────────────────
@@ -180,7 +178,8 @@ void processTask(void* pv) {
         }
 
         // ── 3. Final summary when meeting stops ─────────────────────────────
-        if (finalStop && !meetingActive && !chunkReady) {
+        // Wait until all queued chunks have been drained before summarising.
+        if (finalStop && !meetingActive && uxQueueMessagesWaiting(chunkQueue) == 0) {
             finalStop = false;
             Serial.println("\n[ProcessTask] Meeting stopped — generating FINAL summary...");
 
@@ -241,6 +240,6 @@ void processTask(void* pv) {
             xSemaphoreGive(stateMutex);
         }
 
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        // No extra vTaskDelay — xQueueReceive already blocks for 100 ms.
     }
 }

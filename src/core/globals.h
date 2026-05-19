@@ -60,11 +60,9 @@ extern String openaiApiKey;
 
 // ─── Meeting state ────────────────────────────────────────────────────────────
 extern volatile bool meetingActive;
-extern volatile bool chunkReady;
 extern volatile bool finalStop;
 extern volatile bool needWifiReconnect;
 
-extern String currentChunkPath;
 extern String meetingDir;
 extern String fullTranscript;
 extern String finalTranscriptText; // full transcript snapshot saved before reset
@@ -83,10 +81,18 @@ extern String meetingDisplayTime;
 extern bool   ntpSynced;
 extern time_t meetingStartEpoch;
 
+// ─── Chunk queue ──────────────────────────────────────────────────────────────
+// Replaces the old single-slot (chunkReady + currentChunkPath) handoff.
+// Up to CHUNK_QUEUE_SIZE finished WAV paths can queue up so a slow STT
+// retry never causes recordTask to silently overwrite an un-processed chunk.
+// 8 slots × 15 s = 2 minutes of back-log before anything is dropped.
+#define CHUNK_QUEUE_SIZE  8
+#define CHUNK_PATH_LEN    128
+extern QueueHandle_t chunkQueue;
+
 // ─── RTOS handles ─────────────────────────────────────────────────────────────
 extern TaskHandle_t      recordTaskHandle;
 extern TaskHandle_t      processTaskHandle;
-extern SemaphoreHandle_t chunkMutex;
 // Guards the transcript/summary Strings shared between processTask (writer)
 // and webTask via /api/status (reader). String += / .remove() reallocate
 // the internal buffer, so a reader mid-write can see freed memory.
