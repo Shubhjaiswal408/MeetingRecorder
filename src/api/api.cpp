@@ -163,25 +163,57 @@ String transcribeAudio(const String& path) {
 
 // ─── _gptOnce (internal, single attempt) ─────────────────────────────────────
 static String _gptOnce(const String& transcript, bool isFinal) {
-    String sys  = "You are a professional meeting summarizer. Be concise and clear.";
+    // System prompt for FINAL summaries explicitly tells GPT to cover the
+    // WHOLE meeting (start, middle and end) instead of just the most recent
+    // tactical decisions.  Earlier versions used "be concise and clear" which
+    // led GPT to compress the meeting down to its highlights — losing entire
+    // strategic-planning sections from the first half of long meetings.
+    String sys = isFinal
+        ? "You are a meticulous corporate meeting minutes-taker. Your job is "
+          "to capture EVERY major topic discussed across the entire meeting "
+          "from beginning to end — not just the most recent tactical decisions. "
+          "Cover strategic planning, project assignments, brainstorming and "
+          "decisions with equal thoroughness. Use clear markdown with "
+          "**bold** for emphasis, ## headings, and bullet lists. "
+          "Do NOT skip or condense any major topic."
+        : "You are a professional meeting summarizer. Be concise and clear.";
+
     String user = isFinal
-        ? "Meeting ended. Provide FINAL summary:\n"
-          "1. Overview (2-3 sentences)\n"
-          "2. Key Discussion Points\n"
-          "3. Decisions Made\n"
-          "4. Action Items\n"
-          "5. Important names/dates/numbers\n\nTRANSCRIPT:\n" + transcript
+        ? "Below is the FULL transcript of a meeting from start to finish. "
+          "Generate comprehensive meeting minutes covering EVERY section of "
+          "the meeting in chronological order. Do not omit topics that were "
+          "discussed earlier in favour of later ones — give each major topic "
+          "its own treatment.\n\n"
+          "Use this exact markdown structure:\n\n"
+          "## Overview\n"
+          "3-4 sentences covering the meeting's purpose and the main themes that came up.\n\n"
+          "## Key Discussion Points\n"
+          "Cover EVERY major topic discussed, in roughly chronological order. "
+          "Use sub-bullets for specifics. Include names of people, products, "
+          "vendors, projects, numbers and deadlines mentioned.\n\n"
+          "## Decisions Made\n"
+          "Every decision reached during the meeting, as a bulleted list.\n\n"
+          "## Action Items\n"
+          "Who is doing what, by when. One bullet per action.\n\n"
+          "## Names, Dates & Numbers\n"
+          "Compact reference list of people, dates, vendors, products, "
+          "events, metrics or any other concrete data mentioned.\n\n"
+          "---\n\nTRANSCRIPT:\n" + transcript
         : "Meeting in progress. Brief rolling summary (max 120 words):\n"
           "1. What's been discussed (2 sentences)\n"
           "2. Key points (3-5 bullets)\n"
           "3. Action items so far\n\nTRANSCRIPT:\n" + transcript;
+
+    // max_tokens: 2500 for final (~1900 words — comprehensive minutes for a
+    // multi-section meeting), 512 for rolling (kept compact for live UI).
+    String maxTok = isFinal ? "2500" : "512";
 
     String body =
         "{\"model\":\"gpt-4o-mini\","
         "\"messages\":["
         "{\"role\":\"system\",\"content\":\"" + jsonEscape(sys)  + "\"},"
         "{\"role\":\"user\",\"content\":\""   + jsonEscape(user) + "\"}"
-        "],\"temperature\":0.4,\"max_tokens\":512}";
+        "],\"temperature\":0.4,\"max_tokens\":" + maxTok + "}";
 
     HTTPClient http;
     http.begin(OPENAI_URL);
