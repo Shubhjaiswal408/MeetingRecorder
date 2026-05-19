@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MeetingRecorder — Feature Sheet</title>
+<style>
+@page { size: Letter; margin: 14mm 14mm 14mm 14mm; }
+*  { box-sizing: border-box; }
+html, body { margin:0; padding:0; font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;
+             color:#1a1a1a; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+body { font-size: 9.5pt; line-height: 1.35; }
+h1 { font-size: 18pt; margin: 0 0 2px; font-weight: 700; letter-spacing: -0.01em; }
+.sub { color:#666; font-size: 9pt; margin: 0 0 10px; }
+.cols { column-count: 2; column-gap: 14pt; column-rule: 0.5pt solid #e8e8e8; }
+.sec { break-inside: avoid; margin-bottom: 8pt; }
+.sec h2 { font-size: 10pt; margin: 0 0 3px;
+          padding-bottom: 2px; border-bottom: 1pt solid #2c3e50;
+          color:#2c3e50; letter-spacing:.01em; }
+.sec ul { margin: 0; padding-left: 13pt; }
+.sec li { margin: 0 0 1px; }
+.foot { margin-top: 8pt; padding-top: 6pt; border-top: 0.5pt solid #ddd;
+        font-size: 8pt; color:#666; text-align:center; }
+table.size { width: 100%; border-collapse: collapse; font-size: 9pt; }
+table.size th, table.size td { padding: 2px 4px; border-bottom: 0.3pt solid #ddd;
+                               text-align: left; }
+table.size th { background:#f4f4f6; font-weight:600; }
+</style>
+</head>
+<body>
+
+<h1>MeetingRecorder &mdash; Feature Sheet</h1>
+<p class="sub">XIAO ESP32-S3 voice recorder with cloud transcription, live summaries, and an integrated web UI.</p>
+
+<div class="cols">
+
+  <div class="sec">
+    <h2>Audio capture</h2>
+    <ul>
+      <li>On-board PDM mic (XIAO ESP32-S3 Sense, GPIO 41/42)</li>
+      <li>16 kHz, 16-bit mono PCM &mdash; ~32 KB/sec</li>
+      <li>15-second WAV chunks streamed to microSD</li>
+      <li>2&times; software gain on captured samples</li>
+      <li>Real-time capture on a dedicated Core 0 task</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>WiFi &amp; networking</h2>
+    <ul>
+      <li>Dual-mode WiFi &mdash; home network (STA) + always-on hotspot (AP)</li>
+      <li>AP survives STA failures, retries, and credential changes</li>
+      <li>Hotspot SSID and password configurable from the UI</li>
+      <li>STA auto-reconnect with progressive back-off</li>
+      <li>NTP sync (pool.ntp.org, Google, Cloudflare) &mdash; IST default</li>
+      <li>Browser-time fallback when NTP is unavailable</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Cloud transcription &amp; summarisation</h2>
+    <ul>
+      <li>ElevenLabs Scribe v1 for speech-to-text</li>
+      <li>OpenAI GPT-4o-mini for rolling and final summaries</li>
+      <li>3-attempt retry with WiFi-bounce between tries</li>
+      <li>Multipart streaming upload &mdash; no full-file RAM buffering</li>
+      <li>Rolling summary every chunk once &ge;20 words spoken</li>
+      <li>Final summary on stop, with fallback if the API fails</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Web UI (Dashboard)</h2>
+    <ul>
+      <li>Dark-themed dashboard on port 80 (Inter + JetBrains Mono)</li>
+      <li>Live polling every 2.5 s; pauses when the tab is hidden</li>
+      <li>Mobile-responsive layout with bottom nav; desktop sidebar</li>
+      <li>Transparent mobile status bar &mdash; no black strip on iOS/Android</li>
+      <li>techiesms branding pill (clickable to YouTube)</li>
+      <li>Animated status pill: Idle &middot; Recording &middot; Processing &middot; Done</li>
+      <li>Live stats: chunks, words, duration, status icon</li>
+      <li>Network and device cards: IP, RSSI, RAM, uptime</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Transcript &amp; summary views</h2>
+    <ul>
+      <li>Live rolling transcript updates per chunk</li>
+      <li>Final transcript snapshot preserved post-meeting</li>
+      <li>Truncation banner above ~5,500 chars</li>
+      <li>Markdown rendering: headings, lists, bold/italic</li>
+      <li>Copy buttons with HTTP fallback (execCommand)</li>
+      <li>Download buttons save transcript and summary as .txt</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>History &amp; past meetings</h2>
+    <ul>
+      <li>Auto-archived to <code>/meeting_&lt;timestamp&gt;/</code> on the SD card</li>
+      <li>History tab lists newest-first with previews</li>
+      <li>Show more / show less inline expansion</li>
+      <li>Per-meeting download summary</li>
+      <li>Delete (with confirmation) wipes WAVs + transcripts + summaries</li>
+      <li>&ldquo;Ask AI&rdquo; scoped to any past meeting&rsquo;s summary</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>AI Q&amp;A chat</h2>
+    <ul>
+      <li>Ask anything about a meeting once final summary exists</li>
+      <li>Switch between current and past meeting contexts</li>
+      <li>6-turn conversation memory for follow-ups</li>
+      <li>Suggested prompts (decisions, action items, summary&hellip;)</li>
+      <li>Themed error rendering via <code>[ERR]</code> sentinel</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Configuration</h2>
+    <ul>
+      <li><code>/setup</code> page for WiFi creds, API keys, AP rename</li>
+      <li><code>/config.json</code> on SD for persistent storage</li>
+      <li>No re-flashing required to change credentials</li>
+      <li>AP auto-restarts after rename &mdash; response delivered first</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Concurrency &amp; reliability</h2>
+    <ul>
+      <li>Three pinned FreeRTOS tasks: audio (Core 0), web + processing (Core 1)</li>
+      <li><code>chunkMutex</code> guards chunk handoff between tasks</li>
+      <li><code>stateMutex</code> guards transcript/summary Strings (no realloc races)</li>
+      <li>Snapshot pattern: short locks, slow I/O outside the critical section</li>
+      <li>Web UI stays responsive during slow STT/GPT calls</li>
+      <li>Heap-aware live transcript trim (12 KB max in RAM)</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Physical controls</h2>
+    <ul>
+      <li>Hardware button on D1 toggles meeting start/stop</li>
+      <li>Built-in LED status (ON = idle, OFF = recording)</li>
+      <li>No extra hardware beyond the Sense board + SD card</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Developer experience</h2>
+    <ul>
+      <li>Zero-install bundled Shubh&rsquo;Json JSON parser</li>
+      <li>Clean folder structure &mdash; <code>src/</code> modules by concern</li>
+      <li>Full docs in <code>docs/</code>: README, ARCHITECTURE, FILES, LICENSE</li>
+      <li>Compile-verified on Arduino IDE 2.x + ESP32 core 3.0.0</li>
+      <li>6 unused JSON features disabled at compile time</li>
+    </ul>
+  </div>
+
+  <div class="sec">
+    <h2>Resource footprint</h2>
+    <table class="size">
+      <thead>
+        <tr><th>Resource</th><th>Used</th><th>Available</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Flash</td><td>1.23 MB</td><td>3.34 MB (36%)</td></tr>
+        <tr><td>RAM</td><td>40 KB</td><td>320 KB (12%)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<div class="foot">
+  MeetingRecorder &middot; XIAO ESP32-S3 firmware &middot; Powered by ElevenLabs &amp; OpenAI
+</div>
+
+</body>
+</html>

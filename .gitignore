@@ -1,0 +1,31 @@
+# Claude Code local settings — should not be tracked
+.claude/
+
+# Arduino IDE artifacts (usually elsewhere, but defensive)
+build/
+*.bin
+*.elf
+*.map
+*.hex
+
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# Editor / IDE state
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local config (in case someone runs the firmware from this folder and a
+# stray config.json with API keys lands here)
+config.json
+
+# Backup / scratch
+*.bak
+*.tmp
+*.orig
