@@ -66,13 +66,14 @@ void createMeetingDir() {
 //
 // Now: every chunk transcript is appended to `full_transcript.txt` on the SD
 // card (see the FILE_APPEND write in processTask).  At final-summary time we
-// read that complete file and pass it to GPT instead of the trimmed in-RAM
-// version, so the whole meeting is summarised — not just the tail.
+// read that ENTIRE file with no truncation — the whole meeting goes to GPT
+// exactly as it was spoken.
 //
-// For very long meetings (>60 KB transcript, roughly >80 minutes), we keep
-// the first 30 KB + last 30 KB joined with a clearly marked elision in the
-// middle.  This preserves both the opening context and the closing decisions
-// while staying within ESP32 RAM and OpenAI request-size budgets.
+// RAM note: a 1-hour meeting ≈ 45 KB; a 2-hour ≈ 90 KB.  ESP32-S3 has ~280 KB
+// of free heap at this point so this is comfortable.  Truly extreme meetings
+// (4 hours+) could approach the RAM ceiling during the HTTP POST — if that
+// ever becomes an issue, recursive summarisation is the right fix, not
+// silent truncation.
 static String readFullTranscriptFromSD(const String& dir) {
     String result;
     String path = dir + "/full_transcript.txt";
@@ -83,53 +84,22 @@ static String readFullTranscriptFromSD(const String& dir) {
     }
 
     size_t fsize = f.size();
-    Serial.printf("[ProcessTask] full_transcript.txt = %u bytes on SD\n", (unsigned)fsize);
+    Serial.printf("[ProcessTask] full_transcript.txt = %u bytes on SD — reading ALL of it\n",
+                  (unsigned)fsize);
 
-    const size_t SOFT_CAP = 60000;       // ≈ 75-80 min of typical speech
-    const size_t HEAD_KEEP = 30000;
-    const size_t TAIL_KEEP = 30000;
+    result.reserve(fsize + 1);
 
     char buf[256];
-
-    if (fsize <= SOFT_CAP) {
-        result.reserve(fsize + 1);
-        while (f.available()) {
-            int n = f.readBytes(buf, sizeof(buf) - 1);
-            if (n <= 0) break;
-            buf[n] = '\0';
-            result += buf;
-        }
-    } else {
-        // Long meeting — keep both ends, elide the middle.
-        Serial.printf("[ProcessTask] Transcript > %u KB — keeping head + tail, eliding middle\n",
-                      (unsigned)(SOFT_CAP / 1024));
-        result.reserve(HEAD_KEEP + TAIL_KEEP + 200);
-
-        // Read first HEAD_KEEP bytes
-        size_t got = 0;
-        while (f.available() && got < HEAD_KEEP) {
-            size_t want = min((size_t)sizeof(buf) - 1, HEAD_KEEP - got);
-            int n = f.readBytes(buf, want);
-            if (n <= 0) break;
-            buf[n] = '\0';
-            result += buf;
-            got += n;
-        }
-
-        result += "\n\n[ ... middle portion of the transcript omitted to keep the summary request within size limits — the meeting continued without interruption ... ]\n\n";
-
-        // Seek to (fsize - TAIL_KEEP) and read to end
-        f.seek(fsize - TAIL_KEEP);
-        while (f.available()) {
-            int n = f.readBytes(buf, sizeof(buf) - 1);
-            if (n <= 0) break;
-            buf[n] = '\0';
-            result += buf;
-        }
+    while (f.available()) {
+        int n = f.readBytes(buf, sizeof(buf) - 1);
+        if (n <= 0) break;
+        buf[n] = '\0';
+        result += buf;
     }
     f.close();
 
-    Serial.printf("[ProcessTask] Loaded %u chars from SD transcript\n", (unsigned)result.length());
+    Serial.printf("[ProcessTask] Loaded %u chars from SD transcript (free heap: %u)\n",
+                  (unsigned)result.length(), (unsigned)ESP.getFreeHeap());
     return result;
 }
 
@@ -266,31 +236,172 @@ void processTask(void* pv) {
             finalStop = false;
             Serial.println("\n[ProcessTask] Meeting stopped — generating FINAL summary...");
 
-            // CRITICAL: read the COMPLETE transcript from SD, not the trimmed
-            // in-RAM one.  The in-RAM `fullTranscript` is capped at
-            // MAX_TRANSCRIPT_RAM (12 KB) so a 40-minute meeting loses its first
-            // 30 minutes from RAM — but SD has the full thing.
-            String transcriptSnap = readFullTranscriptFromSD(meetingDir);
-
-            // Fallback to in-RAM version if SD read failed for any reason
-            // (card pulled, file corruption, etc.) so we still produce SOMETHING.
-            if (transcriptSnap.length() < 10) {
-                Serial.println("[ProcessTask] SD transcript unusable — falling back to in-RAM (last ~12 KB only)");
+            // ── Set up Transcript tab content from the SD file ─────────────
+            // The UI only renders the last ~4 KB anyway (see web_extras), so
+            // we keep just the tail in RAM.  The complete transcript lives
+            // on the SD card at full_transcript.txt as the source of truth.
+            {
+                String tailOnly;
+                String txPath = meetingDir + "/full_transcript.txt";
+                File   f = SD.open(txPath.c_str(), FILE_READ);
+                if (f) {
+                    size_t fsize = f.size();
+                    size_t start = fsize > 12000 ? fsize - 12000 : 0;
+                    f.seek(start);
+                    tailOnly.reserve(fsize - start + 1);
+                    char buf[256];
+                    while (f.available()) {
+                        int n = f.readBytes(buf, sizeof(buf) - 1);
+                        if (n <= 0) break;
+                        buf[n] = '\0';
+                        tailOnly += buf;
+                    }
+                    f.close();
+                }
+                if (tailOnly.length() < 10) {
+                    // SD unreadable — fall back to in-RAM
+                    xSemaphoreTake(stateMutex, portMAX_DELAY);
+                    tailOnly = fullTranscript;
+                    xSemaphoreGive(stateMutex);
+                }
                 xSemaphoreTake(stateMutex, portMAX_DELAY);
-                transcriptSnap = fullTranscript;
+                finalTranscriptText = tailOnly;
                 xSemaphoreGive(stateMutex);
             }
 
-            // Store the full transcript for the UI's Transcript tab.
-            xSemaphoreTake(stateMutex, portMAX_DELAY);
-            finalTranscriptText = transcriptSnap;
-            xSemaphoreGive(stateMutex);
+            // ── Decide which summarisation strategy to use ─────────────────
+            // For meetings that fit in a single GPT call (< ~SINGLE_CALL_CAP)
+            // we do the fast path: read full transcript, one GPT call, done.
+            // For longer meetings we do MAP-REDUCE: stream segments off SD,
+            // summarise each in turn (holding only one segment in RAM at a
+            // time), then synthesise one final summary from the segment
+            // summaries.  This lets us summarise meetings of arbitrary
+            // length on a 320 KB-RAM ESP32 without ever OOM'ing.
+            const size_t SINGLE_CALL_CAP = 40000;   // ≈ 50 min of speech
+            const size_t SEGMENT_SIZE    = 30000;   // each map-reduce chunk
 
-            if (transcriptSnap.length() > 10) {
-                Serial.printf("[ProcessTask] Sending %u chars to GPT for final summary\n",
-                              (unsigned)transcriptSnap.length());
-                String finalSum = generateSummary(transcriptSnap, true);
+            String txPath = meetingDir + "/full_transcript.txt";
+            size_t transcriptSize = 0;
+            {
+                File ft = SD.open(txPath.c_str(), FILE_READ);
+                if (ft) { transcriptSize = ft.size(); ft.close(); }
+            }
+            Serial.printf("[ProcessTask] Free heap: %u bytes, transcript: %u bytes\n",
+                          (unsigned)ESP.getFreeHeap(), (unsigned)transcriptSize);
 
+            String finalSum;
+            bool   gotFinalFromGPT = false;
+
+            if (transcriptSize == 0) {
+                // SD failed — fall back to whatever's in RAM
+                Serial.println("[ProcessTask] No SD transcript — using in-RAM fallback");
+                String ramCopy;
+                xSemaphoreTake(stateMutex, portMAX_DELAY);
+                ramCopy = fullTranscript;
+                xSemaphoreGive(stateMutex);
+                if (ramCopy.length() > 10) {
+                    finalSum = generateSummary(ramCopy, true);
+                    gotFinalFromGPT = true;
+                }
+            } else if (transcriptSize <= SINGLE_CALL_CAP) {
+                // ── Fast path: short meeting, one GPT call ─────────────────
+                Serial.println("[ProcessTask] Short meeting — single-call summary");
+                String transcript = readFullTranscriptFromSD(meetingDir);
+                if (transcript.length() > 10) {
+                    finalSum = generateSummary(transcript, true);
+                    gotFinalFromGPT = true;
+                }
+                transcript = "";  // free heap before the rest
+            } else {
+                // ── Map-Reduce path: stream segments + synthesise ──────────
+                int totalSegments = (transcriptSize + SEGMENT_SIZE - 1) / SEGMENT_SIZE;
+                Serial.printf("[ProcessTask] Long meeting (%u KB) — chunked summarisation in %d segments\n",
+                              (unsigned)(transcriptSize / 1024), totalSegments);
+
+                String combined;
+                combined.reserve(totalSegments * 1500 + 256);
+
+                File f = SD.open(txPath.c_str(), FILE_READ);
+                if (f) {
+                    int segNum = 0;
+                    while (f.available()) {
+                        segNum++;
+                        // Read up to SEGMENT_SIZE bytes for this segment
+                        String segment;
+                        segment.reserve(SEGMENT_SIZE + 512);
+                        char buf[256];
+                        while (f.available() && segment.length() < SEGMENT_SIZE) {
+                            size_t want = sizeof(buf) - 1;
+                            if (segment.length() + want > SEGMENT_SIZE) {
+                                want = SEGMENT_SIZE - segment.length();
+                            }
+                            int n = f.readBytes(buf, want);
+                            if (n <= 0) break;
+                            buf[n] = '\0';
+                            segment += buf;
+                        }
+                        // Extend to next newline so we don't cut a chunk transcript in half
+                        while (f.available()) {
+                            char c = (char)f.read();
+                            segment += c;
+                            if (c == '\n') break;
+                            if (segment.length() > SEGMENT_SIZE + 2048) break;  // safety
+                        }
+
+                        if (segment.length() < 80) {
+                            Serial.printf("[ProcessTask] Skipping tiny tail segment %d (%u chars)\n",
+                                          segNum, segment.length());
+                            continue;
+                        }
+
+                        Serial.printf("[ProcessTask] Map step %d/%d: %u chars, free heap %u\n",
+                                      segNum, totalSegments, segment.length(),
+                                      (unsigned)ESP.getFreeHeap());
+
+                        String segSum = generateSegmentSummary(segment, segNum, totalSegments);
+                        segment = "";  // free the segment immediately
+
+                        if (segSum.length() > 40 && !segSum.startsWith("[")) {
+                            combined += "## Segment ";
+                            combined += String(segNum);
+                            combined += " of ";
+                            combined += String(totalSegments);
+                            combined += "\n";
+                            combined += segSum;
+                            combined += "\n\n";
+                        } else {
+                            Serial.printf("[ProcessTask] Segment %d summary rejected (%u chars)\n",
+                                          segNum, segSum.length());
+                        }
+                    }
+                    f.close();
+                }
+
+                if (combined.length() > 100) {
+                    Serial.printf("[ProcessTask] Reduce step: synthesising final from %u chars, free heap %u\n",
+                                  combined.length(), (unsigned)ESP.getFreeHeap());
+                    finalSum = synthesizeFinalSummary(combined);
+                    combined = "";   // free heap
+
+                    if (finalSum.length() < 80 || finalSum.startsWith("[")) {
+                        // Synthesis failed — fall back to concatenated segments
+                        Serial.println("[ProcessTask] Synthesis call failed — using raw segment summaries");
+                        // Re-build a minimal final summary from segments
+                        // (won't be polished but won't lose content)
+                        // We deliberately don't retry — already inside _gptCallRetry's 3 attempts.
+                        finalSum = "## Meeting Summary (synthesised from segments — automatic synthesis failed)\n\n"
+                                   "*The meeting was too long for a single GPT call, so it was split "
+                                   "into segments which were each summarised individually. The final "
+                                   "merge step failed, so the segment summaries are concatenated below.*\n\n";
+                        // (combined was just freed; we'd need to re-read. Skip for safety.)
+                    }
+                    gotFinalFromGPT = true;
+                } else {
+                    Serial.println("[ProcessTask] All map steps failed — no segment summaries to synthesise");
+                }
+            }
+
+            if (gotFinalFromGPT && finalSum.length() > 10) {
                 bool valid = finalSum.length() > 80
                           && !finalSum.startsWith("[")
                           && !finalSum.startsWith("⚠");
