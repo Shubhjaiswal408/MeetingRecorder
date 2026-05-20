@@ -211,6 +211,22 @@ static void handleApiHistory() {
             summary.trim();
         }
 
+        // Skip meetings with no usable summary so the History tab doesn't
+        // get cluttered with empty entries.  Two ways a meeting can end up
+        // useless: (a) user pressed start/stop without speaking, so no
+        // summary_final.txt was ever written (summary stays "") — or
+        // (b) GPT failed and we wrote the fallback "Meeting recorded but
+        // summary failed..." marker.  Hide both — the underlying
+        // directories stay on the SD card and can still be removed
+        // manually if desired.
+        bool isUseful = summary.length() >= 50
+                     && !summary.startsWith("Meeting recorded but summary failed")
+                     && !summary.startsWith("Not enough speech");
+        if (!isUseful) {
+            Serial.printf("[/api/history] Skipping empty meeting: %s\n", name.c_str());
+            continue;
+        }
+
         if (!first) json += ",";
         json += "{\"dir\":\""     + jsonEscape(name)    + "\","
               +  "\"summary\":\"" + jsonEscape(summary) + "\"}";
