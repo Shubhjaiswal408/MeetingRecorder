@@ -151,7 +151,13 @@ void setup() {
             delay(500); Serial.print(".");
         }
         if (WiFi.status() == WL_CONNECTED) {
-            WiFi.setSleep(false);
+            // Enable WiFi modem-sleep — the radio sleeps between beacon
+            // intervals (~100 ms) when no data is in flight.  Saves roughly
+            // 30 mA continuously vs. setSleep(false).  Outgoing HTTPS POSTs
+            // (STT / GPT) wake the radio automatically; we only see a few
+            // hundred ms of extra latency, which is negligible compared to
+            // the call itself.
+            WiFi.setSleep(true);
             WiFi.setTxPower(WIFI_POWER_19_5dBm);
             Serial.printf("\n[Setup] WiFi OK — IP: %s  RSSI: %d dBm\n",
                           WiFi.localIP().toString().c_str(), WiFi.RSSI());
@@ -183,6 +189,16 @@ void setup() {
     xTaskCreatePinnedToCore(webTask,     "WebSrv",  6144,  NULL, 3, NULL,               1);
     // Core 1: chunk processing (lower priority — runs when web yields)
     xTaskCreatePinnedToCore(processTask, "Process", 20480, NULL, 1, &processTaskHandle, 1);
+
+    // ── Idle power mode ──────────────────────────────────────────────────
+    // Boot is done; until a meeting starts there is no audio capture and
+    // no HTTPS in flight, so the CPU can drop from 240 MHz to 80 MHz.
+    // This cuts the chip's quiescent current by roughly 20-25 mA without
+    // affecting the web UI's responsiveness (web routes are I/O-bound).
+    // We bump back to 240 MHz when a meeting starts (see button handler
+    // below + handleApiStart) so STT/GPT and recording run at full speed.
+    setCpuFrequencyMhz(80);
+    Serial.println("[Power] Idle: CPU @ 80 MHz, WiFi modem sleep ON");
 
     Serial.println("\n========================================");
     Serial.printf( "  AP  URL : http://%s  (SSID: %s)\n",
@@ -217,7 +233,7 @@ void loop() {
             delay(500); Serial.print(".");
         }
         if (WiFi.status() == WL_CONNECTED) {
-            WiFi.setSleep(false);
+            WiFi.setSleep(true);   // see setup() — modem sleep saves ~30 mA
             WiFi.setTxPower(WIFI_POWER_19_5dBm);
             Serial.printf("\n[WiFi] Connected — IP: %s\n",
                           WiFi.localIP().toString().c_str());
@@ -236,7 +252,11 @@ void loop() {
     if (prevBtn == HIGH && curBtn == LOW) {
         delay(80);
         if (!meetingActive) {
-            Serial.println("\n[Loop] ● MEETING STARTED (button)");
+            // Bump CPU before flipping meetingActive so the audio task that
+            // is about to read its first I2S buffer already has full speed.
+            setCpuFrequencyMhz(240);
+            Serial.println("[Power] Active: CPU @ 240 MHz");
+            Serial.println("[Loop] ● MEETING STARTED (button)");
             xSemaphoreTake(stateMutex, portMAX_DELAY);
             fullTranscript     = "";
             finalTranscriptText= "";
@@ -255,6 +275,9 @@ void loop() {
             meetingActive = false;
             finalStop     = true;
             digitalWrite(LED_BUILTIN, HIGH);
+            // CPU stays at 240 MHz here — processTask still has to run the
+            // final summary (potentially a multi-call map-reduce).  It will
+            // drop back to 80 MHz itself once the summary is saved.
         }
     }
     prevBtn = curBtn;

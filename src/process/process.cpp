@@ -447,6 +447,24 @@ void processTask(void* pv) {
             chunkIndex     = 0;
             wordCount      = 0;
             xSemaphoreGive(stateMutex);
+
+            // ── Power-down: meeting fully wrapped up ─────────────────────
+            // Audio capture, STT calls, and the final summary (including
+            // the multi-call map-reduce path) are all done.  Drop the CPU
+            // back to 80 MHz so the device sips power while waiting for
+            // the next meeting.  Saves ~20 mA over staying at 240 MHz.
+            //
+            // Safety check: a user could start the NEXT meeting while we
+            // were still generating the previous final summary (a long
+            // map-reduce can take 2-3 minutes).  In that case the button
+            // handler / handleApiStart will have already bumped the CPU
+            // back to 240, so we must NOT drop it back to 80 here.
+            if (!meetingActive) {
+                setCpuFrequencyMhz(80);
+                Serial.println("[Power] Idle: CPU back to 80 MHz");
+            } else {
+                Serial.println("[Power] Next meeting already started — keeping CPU at 240 MHz");
+            }
         }
 
         // No extra vTaskDelay — xQueueReceive already blocks for 100 ms.

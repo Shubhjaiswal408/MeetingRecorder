@@ -59,7 +59,7 @@ bool ensureWiFi() {
             return false;
         }
     }
-    WiFi.setSleep(false);
+    WiFi.setSleep(true);   // WiFi modem sleep for power saving
     Serial.println("\n[WiFi] Reconnected: " + WiFi.localIP().toString()
                    + "  RSSI: " + String(WiFi.RSSI()) + " dBm");
     return true;

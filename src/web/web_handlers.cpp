@@ -50,6 +50,11 @@ static void handleSetup() {
 // ─── POST /api/start ─────────────────────────────────────────────────────────
 static void handleApiStart() {
     if (!meetingActive) {
+        // Full-speed CPU for I2S DMA + STT/GPT TLS work.
+        // Dropped back to 80 MHz at the end of the final-summary block in
+        // processTask (see process.cpp).
+        setCpuFrequencyMhz(240);
+        Serial.println("[Power] Active: CPU @ 240 MHz");
         xSemaphoreTake(stateMutex, portMAX_DELAY);
         fullTranscript      = "";
         finalTranscriptText = "";   // clear previous meeting's transcript
