@@ -193,8 +193,20 @@ static void handleApiHistory() {
         }
 
         if (sf) {
-            while (sf.available() && (int)summary.length() < 1200)
-                summary += (char)sf.read();
+            // Read the FULL summary file.  Comprehensive final summaries
+            // (especially from the map-reduce path on long meetings) are
+            // routinely 2-4 KB; the old 1200-char cap was cutting them off
+            // mid-word in the History tab even though the Summary tab
+            // showed them complete.  We keep a generous safety cap at 8 KB
+            // per meeting so the /api/history response can't blow up the
+            // HTTP buffer if some file is unexpectedly huge.
+            char buf[256];
+            while (sf.available() && (int)summary.length() < 8000) {
+                int n = sf.readBytes(buf, sizeof(buf) - 1);
+                if (n <= 0) break;
+                buf[n] = '\0';
+                summary += buf;
+            }
             sf.close();
             summary.trim();
         }
