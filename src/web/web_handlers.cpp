@@ -67,7 +67,7 @@ static void handleApiStart() {
         finalStop           = false;
         createMeetingDir();
         meetingActive       = true;
-        digitalWrite(LED_BUILTIN, LOW);
+        // LED is managed by the blink state machine in loop().
         Serial.println("[Web] ● Meeting STARTED via web UI");
     }
     server.send(200, "application/json", "{\"ok\":true}");
@@ -78,7 +78,7 @@ static void handleApiStop() {
     if (meetingActive) {
         meetingActive = false;
         finalStop     = true;
-        digitalWrite(LED_BUILTIN, HIGH);
+        // LED keeps blinking while processTask finishes the final summary.
         Serial.println("[Web] ■ Meeting STOPPED via web UI");
     }
     server.send(200, "application/json", "{\"ok\":true}");

@@ -233,7 +233,8 @@ void processTask(void* pv) {
         // ── 3. Final summary when meeting stops ─────────────────────────────
         // Wait until all queued chunks have been drained before summarising.
         if (finalStop && !meetingActive && uxQueueMessagesWaiting(chunkQueue) == 0) {
-            finalStop = false;
+            finalStop       = false;
+            processingFinal = true;   // keeps LED blinking through the whole job
             Serial.println("\n[ProcessTask] Meeting stopped — generating FINAL summary...");
 
             // ── Set up Transcript tab content from the SD file ─────────────
@@ -459,6 +460,7 @@ void processTask(void* pv) {
             // map-reduce can take 2-3 minutes).  In that case the button
             // handler / handleApiStart will have already bumped the CPU
             // back to 240, so we must NOT drop it back to 80 here.
+            processingFinal = false;   // LED can stop blinking now
             if (!meetingActive) {
                 setCpuFrequencyMhz(80);
                 Serial.println("[Power] Idle: CPU back to 80 MHz");

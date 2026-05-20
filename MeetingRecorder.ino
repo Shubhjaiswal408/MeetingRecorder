@@ -64,6 +64,7 @@ String apPass = AP_PASS_DEFAULT;
 // Core meeting state
 volatile bool meetingActive     = false;
 volatile bool finalStop         = false;
+volatile bool processingFinal   = false;   // true during final-summary generation
 volatile bool needWifiReconnect = false;
 volatile bool needApRestart     = false;   // set when AP SSID/pass changed via UI
 
@@ -113,6 +114,12 @@ void setup() {
     Serial.println("\n========================================");
     Serial.println("   XIAO ESP32-S3  MEETING RECORDER v3");
     Serial.println("========================================");
+
+    // Bluetooth: this project never uses BT — turn the controller fully off
+    // so the BLE/BT modem doesn't keep its radio alive in the background.
+    // Saves ~5-10 mA continuous on ESP32-S3.
+    btStop();
+    Serial.println("[Power] Bluetooth controller stopped");
 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(LED_BUILTIN, OUTPUT);
@@ -269,17 +276,51 @@ void loop() {
             finalStop          = false;
             stampNow();
             meetingActive      = true;
-            digitalWrite(LED_BUILTIN, LOW);
+            // LED is now managed by the blink state machine below.
         } else {
             Serial.println("\n[Loop] ■ MEETING STOPPED (button)");
             meetingActive = false;
             finalStop     = true;
-            digitalWrite(LED_BUILTIN, HIGH);
             // CPU stays at 240 MHz here — processTask still has to run the
             // final summary (potentially a multi-call map-reduce).  It will
             // drop back to 80 MHz itself once the summary is saved.
+            // LED keeps blinking while processingFinal / queue drain runs.
         }
     }
     prevBtn = curBtn;
+
+    // ── LED state machine ──────────────────────────────────────────────────
+    // Slow heartbeat blink (one 80 ms pulse every 5 s) while the device is
+    // busy — either actively recording, draining queued chunks, or
+    // generating the final summary.  When fully idle the LED is OFF.
+    //
+    // Cuts LED duty cycle from 100% to ~1.6% during recording, which on a
+    // 5 mA LED saves roughly 5 mA average.  More importantly the slow blink
+    // gives a clear "still working" signal during long map-reduce summary
+    // jobs that can last several minutes.
+    static unsigned long ledBlinkStart = 0;
+    static bool          ledPulseOn    = false;
+
+    bool deviceBusy = meetingActive
+                   || finalStop
+                   || processingFinal
+                   || uxQueueMessagesWaiting(chunkQueue) > 0;
+
+    if (deviceBusy) {
+        unsigned long now = millis();
+        if (!ledPulseOn && (now - ledBlinkStart) >= 5000) {
+            ledBlinkStart = now;
+            ledPulseOn    = true;
+            digitalWrite(LED_BUILTIN, LOW);    // active-low: pulse ON
+        } else if (ledPulseOn && (now - ledBlinkStart) >= 80) {
+            ledPulseOn = false;
+            digitalWrite(LED_BUILTIN, HIGH);   // pulse OFF
+        }
+    } else {
+        // Fully idle — make sure LED is OFF
+        if (ledPulseOn) ledPulseOn = false;
+        digitalWrite(LED_BUILTIN, HIGH);
+    }
+
     delay(5);
 }
