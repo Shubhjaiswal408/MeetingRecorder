@@ -103,6 +103,135 @@ static String readFullTranscriptFromSD(const String& dir) {
     return result;
 }
 
+// ─── regenerateSummaryForMeeting ─────────────────────────────────────────────
+// Standalone version of the final-summary logic from processTask, callable
+// from the web layer.  Reads <dir>/full_transcript.txt, picks single-call
+// vs. map-reduce based on size, runs GPT, saves the new summary_final.txt,
+// and returns the summary string.  Does not touch any live meeting state.
+String regenerateSummaryForMeeting(const String& dir) {
+    String txPath = dir + "/full_transcript.txt";
+    size_t fsize = 0;
+    {
+        File f = SD.open(txPath.c_str(), FILE_READ);
+        if (!f) {
+            Serial.println("[Regen] full_transcript.txt missing for " + dir);
+            return "";
+        }
+        fsize = f.size();
+        f.close();
+    }
+    if (fsize < 50) {
+        Serial.printf("[Regen] Transcript too short (%u bytes) for %s\n",
+                      (unsigned)fsize, dir.c_str());
+        return "";
+    }
+
+    Serial.printf("[Regen] %s — transcript %u bytes, free heap %u\n",
+                  dir.c_str(), (unsigned)fsize, (unsigned)ESP.getFreeHeap());
+
+    const size_t SINGLE_CALL_CAP = 25000;
+    const size_t SEGMENT_SIZE    = 25000;
+
+    String finalSum;
+
+    if (fsize <= SINGLE_CALL_CAP) {
+        // Single-call path
+        String transcript;
+        transcript.reserve(fsize + 1);
+        File f = SD.open(txPath.c_str(), FILE_READ);
+        if (f) {
+            char buf[256];
+            while (f.available()) {
+                int n = f.readBytes(buf, sizeof(buf) - 1);
+                if (n <= 0) break;
+                buf[n] = '\0';
+                transcript += buf;
+            }
+            f.close();
+        }
+        if (transcript.length() < 50) return "";
+        Serial.printf("[Regen] Single-call summary: %u chars\n",
+                      (unsigned)transcript.length());
+        finalSum = generateSummary(transcript, true);
+    } else {
+        // Map-reduce path — stream segments
+        int totalSegments = (fsize + SEGMENT_SIZE - 1) / SEGMENT_SIZE;
+        Serial.printf("[Regen] Map-reduce: %d segments\n", totalSegments);
+
+        String combined;
+        combined.reserve(totalSegments * 1500 + 256);
+
+        File f = SD.open(txPath.c_str(), FILE_READ);
+        if (f) {
+            int segNum = 0;
+            while (f.available()) {
+                segNum++;
+                String segment;
+                segment.reserve(SEGMENT_SIZE + 512);
+                char buf[256];
+                while (f.available() && segment.length() < SEGMENT_SIZE) {
+                    size_t want = sizeof(buf) - 1;
+                    if (segment.length() + want > SEGMENT_SIZE) {
+                        want = SEGMENT_SIZE - segment.length();
+                    }
+                    int n = f.readBytes(buf, want);
+                    if (n <= 0) break;
+                    buf[n] = '\0';
+                    segment += buf;
+                }
+                // extend to next newline
+                while (f.available()) {
+                    char c = (char)f.read();
+                    segment += c;
+                    if (c == '\n') break;
+                    if (segment.length() > SEGMENT_SIZE + 2048) break;
+                }
+                if (segment.length() < 80) continue;
+
+                Serial.printf("[Regen] Map %d/%d: %u chars\n",
+                              segNum, totalSegments, segment.length());
+                String segSum = generateSegmentSummary(segment, segNum, totalSegments);
+                segment = "";
+                if (segSum.length() > 40 && !segSum.startsWith("[")) {
+                    combined += "## Segment ";
+                    combined += String(segNum);
+                    combined += " of ";
+                    combined += String(totalSegments);
+                    combined += "\n";
+                    combined += segSum;
+                    combined += "\n\n";
+                }
+            }
+            f.close();
+        }
+
+        if (combined.length() > 100) {
+            Serial.printf("[Regen] Reduce step: %u chars\n",
+                          (unsigned)combined.length());
+            finalSum = synthesizeFinalSummary(combined);
+        }
+    }
+
+    // Validate + save
+    bool valid = finalSum.length() > 80
+              && !finalSum.startsWith("[")
+              && !finalSum.startsWith("⚠");
+    if (!valid) {
+        Serial.println("[Regen] GPT result invalid — not saving");
+        return "";
+    }
+
+    File sf = SD.open((dir + "/summary_final.txt").c_str(), FILE_WRITE);
+    if (sf) {
+        sf.print(finalSum);
+        sf.close();
+        Serial.printf("[Regen] Saved %u chars to %s/summary_final.txt\n",
+                      (unsigned)finalSum.length(), dir.c_str());
+    }
+
+    return finalSum;
+}
+
 // ─── saveSummaryToSD — always writes summary_final.txt ───────────────────────
 // This is the filename the /api/history endpoint reads.
 // Also writes a timestamped copy for human browsing on the card.
@@ -278,8 +407,13 @@ void processTask(void* pv) {
             // time), then synthesise one final summary from the segment
             // summaries.  This lets us summarise meetings of arbitrary
             // length on a 320 KB-RAM ESP32 without ever OOM'ing.
-            const size_t SINGLE_CALL_CAP = 40000;   // ≈ 50 min of speech
-            const size_t SEGMENT_SIZE    = 30000;   // each map-reduce chunk
+            // Threshold dropped from 40 KB → 25 KB after real-world tests
+            // showed 30-40 KB transcripts (≈ 40-50 min meetings) sometimes
+            // failed the single GPT call (timeout or partial response) and
+            // silently fell back to the rolling summary.  Map-reduce splits
+            // those into smaller, more reliable per-call payloads.
+            const size_t SINGLE_CALL_CAP = 25000;   // ≈ 30 min of speech
+            const size_t SEGMENT_SIZE    = 25000;   // each map-reduce chunk
 
             String txPath = meetingDir + "/full_transcript.txt";
             size_t transcriptSize = 0;

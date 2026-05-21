@@ -285,6 +285,129 @@ static void handleApiHistoryDelete() {
     server.send(200, "application/json", "{\"ok\":true}");
 }
 
+// ─── POST /api/history/regenerate ────────────────────────────────────────────
+// Re-run the final-summary GPT pipeline on a past meeting's saved
+// full_transcript.txt and overwrite summary_final.txt with the result.
+// Useful when the original final-summary call failed and we fell back to
+// the (much shorter) rolling summary.
+static void handleApiHistoryRegenerate() {
+    server.sendHeader("Access-Control-Allow-Origin",  "*");
+    server.sendHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    server.sendHeader("Cache-Control", "no-cache");
+
+    if (server.method() != HTTP_POST) {
+        server.send(405, "text/plain", "POST only");
+        return;
+    }
+
+    // Same dir-parsing strategy as the delete endpoint
+    String dir = server.arg("dir");
+    if (dir.isEmpty() && server.hasArg("plain")) {
+        String body = server.arg("plain");
+        int di = body.indexOf("dir=");
+        if (di >= 0) {
+            int de = body.indexOf('&', di);
+            dir = de < 0 ? body.substring(di + 4) : body.substring(di + 4, de);
+            dir.replace("+", " ");
+        }
+    }
+
+    if (dir.isEmpty()
+     || !dir.startsWith("meeting_")
+     || dir.indexOf('/') >= 0
+     || dir.indexOf('\\') >= 0
+     || dir.indexOf("..") >= 0) {
+        Serial.printf("[History] Refused regenerate (bad dir): '%s'\n", dir.c_str());
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid dir\"}");
+        return;
+    }
+
+    String fullPath = "/" + dir;
+    Serial.printf("[History] Regenerating summary for: %s\n", fullPath.c_str());
+
+    // This is the slow path — runs GPT, can take 30 s for a short meeting
+    // or several minutes for a long map-reduce.  The browser fetch can
+    // wait; we keep handleClient() responsive by virtue of webTask being
+    // on its own pinned core.
+    String newSum = regenerateSummaryForMeeting(fullPath);
+
+    if (newSum.length() < 80) {
+        server.send(500, "application/json",
+                    "{\"ok\":false,\"error\":\"regeneration failed — check OpenAI key / network\"}");
+        return;
+    }
+
+    String resp = "{\"ok\":true,\"summary\":\"" + jsonEscape(newSum) + "\"}";
+    server.send(200, "application/json", resp);
+}
+
+// ─── POST /api/factory-reset ─────────────────────────────────────────────────
+// Wipes ALL device state and reboots into AP-only setup mode:
+//   • /config.json deleted (WiFi creds, API keys, AP settings)
+//   • Every /meeting_* directory recursively deleted (transcripts, audio,
+//     summaries)
+//   • ESP.restart() after a short delay so the browser gets a clean
+//     response and renders its "device reset" screen
+static void handleApiFactoryReset() {
+    server.sendHeader("Access-Control-Allow-Origin",  "*");
+    server.sendHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+    server.sendHeader("Cache-Control", "no-cache");
+
+    if (server.method() != HTTP_POST) {
+        server.send(405, "text/plain", "POST only");
+        return;
+    }
+
+    Serial.println("\n[FactoryReset] ── BEGIN ─────────────────────────────");
+
+    // 1. Stop any active meeting first
+    if (meetingActive) {
+        Serial.println("[FactoryReset] Stopping active meeting first");
+        meetingActive = false;
+        finalStop     = false;
+    }
+
+    // 2. Delete all meeting directories
+    File root = SD.open("/");
+    if (root && root.isDirectory()) {
+        File entry = root.openNextFile();
+        // Collect names first — deleting while iterating corrupts FatFS state
+        const int MAX_DELETE = 200;
+        String toDelete[MAX_DELETE];
+        int dn = 0;
+        while (entry && dn < MAX_DELETE) {
+            String n = entry.name();
+            // entry.name() can be either bare ("meeting_xxx") or full ("/meeting_xxx")
+            int slash = n.lastIndexOf('/');
+            if (slash >= 0) n = n.substring(slash + 1);
+            if (entry.isDirectory() && n.startsWith("meeting_")) {
+                toDelete[dn++] = "/" + n;
+            }
+            entry.close();
+            entry = root.openNextFile();
+        }
+        root.close();
+        Serial.printf("[FactoryReset] Found %d meeting directories to delete\n", dn);
+        for (int i = 0; i < dn; i++) {
+            deleteDirRecursive(toDelete[i]);
+        }
+    }
+
+    // 3. Delete config file (wipes WiFi creds + API keys + AP settings)
+    if (SD.exists(CONFIG_FILE)) {
+        SD.remove(CONFIG_FILE);
+        Serial.println("[FactoryReset] config.json deleted");
+    }
+
+    Serial.println("[FactoryReset] ── COMPLETE — rebooting in 2 s ────────");
+    server.send(200, "application/json", "{\"ok\":true,\"msg\":\"factory reset complete — rebooting\"}");
+
+    // Give the response a moment to be flushed before we reboot
+    delay(2000);
+    ESP.restart();
+}
+
 // ─── 404 ─────────────────────────────────────────────────────────────────────
 static void handle404() {
     server.send(404, "text/plain", "Not found");
@@ -297,8 +420,10 @@ void startWebServer() {
     server.on("/api/start",          HTTP_POST, handleApiStart);
     server.on("/api/stop",           HTTP_POST, handleApiStop);
     server.on("/api/config",         HTTP_POST, handleApiConfig);
-    server.on("/api/history",        HTTP_GET,  handleApiHistory);
-    server.on("/api/history/delete", HTTP_POST, handleApiHistoryDelete);
+    server.on("/api/history",            HTTP_GET,  handleApiHistory);
+    server.on("/api/history/delete",     HTTP_POST, handleApiHistoryDelete);
+    server.on("/api/history/regenerate", HTTP_POST, handleApiHistoryRegenerate);
+    server.on("/api/factory-reset",      HTTP_POST, handleApiFactoryReset);
 
     // v2 routes from web_extras
     server.on("/api/status",  HTTP_GET,  handleApiStatus);
