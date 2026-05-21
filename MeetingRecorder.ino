@@ -28,7 +28,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
-#include "src/json/ShubhJson.h"   
+#include <ESPmDNS.h>
+#include "src/json/ShubhJson.h"
 #include <time.h>
 
 #include "src/core/globals.h"
@@ -144,41 +145,61 @@ void setup() {
     }
     Serial.println("OK");
 
-    // WiFi: AP always on + STA for internet
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP(apSSID.c_str(), apPass.c_str());
-    Serial.printf("[Setup] AP: %-20s  IP=%s\n",
-                  apSSID.c_str(), WiFi.softAPIP().toString().c_str());
-
-    if (wifiSSID.length() > 0) {
+    // ── WiFi mode logic ────────────────────────────────────────────────────
+    // Three paths:
+    //   (A) No creds saved yet → AP-ONLY for first-time setup
+    //   (B) Creds saved & STA connects → STA-ONLY + mDNS (AP turned off so
+    //       the user's phone/laptop keeps internet access on the home WiFi)
+    //   (C) Creds saved but STA fails → AP+STA fallback so the user can
+    //       reconfigure via the hotspot
+    if (wifiSSID.length() == 0) {
+        // (A) First-time setup — AP only
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP(apSSID.c_str(), apPass.c_str());
+        Serial.printf("[Setup] No WiFi creds — AP-only mode\n");
+        Serial.printf("[Setup] Connect to '%s' (password: %s)\n",
+                      apSSID.c_str(), apPass.c_str());
+        Serial.printf("[Setup] Then open http://%s/setup to configure WiFi\n",
+                      WiFi.softAPIP().toString().c_str());
+    } else {
+        // Creds exist — try STA-only first
         Serial.printf("[Setup] Connecting STA: %s\n", wifiSSID.c_str());
+        WiFi.mode(WIFI_STA);
         WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
         uint32_t wt = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - wt < 15000) {
             delay(500); Serial.print(".");
         }
+
         if (WiFi.status() == WL_CONNECTED) {
-            // Enable WiFi modem-sleep — the radio sleeps between beacon
-            // intervals (~100 ms) when no data is in flight.  Saves roughly
-            // 30 mA continuously vs. setSleep(false).  Outgoing HTTPS POSTs
-            // (STT / GPT) wake the radio automatically; we only see a few
-            // hundred ms of extra latency, which is negligible compared to
-            // the call itself.
-            WiFi.setSleep(true);
+            // (B) STA OK — STA-only, AP stays off.  User's phone/laptop
+            // keeps internet on the home network and reaches the dashboard
+            // via mDNS (meetingrecorder.local) — no more "connect to the
+            // device hotspot and lose internet" inconvenience.
+            WiFi.setSleep(true);     // modem-sleep for power savings
             WiFi.setTxPower(WIFI_POWER_19_5dBm);
             Serial.printf("\n[Setup] WiFi OK — IP: %s  RSSI: %d dBm\n",
                           WiFi.localIP().toString().c_str(), WiFi.RSSI());
+
+            // Start mDNS so the dashboard is reachable at meetingrecorder.local
+            // from any device on the same WiFi.  No need to memorise IPs.
+            if (MDNS.begin("meetingrecorder")) {
+                MDNS.addService("http", "tcp", 80);
+                Serial.println("[Setup] mDNS active: http://meetingrecorder.local");
+            } else {
+                Serial.println("[Setup] mDNS init failed — fall back to IP");
+            }
+
             ntpInit();   // sync clock right after STA connects
         } else {
-            Serial.println("\n[Setup] WiFi TIMEOUT — AP only.");
-            // Re-arm AP — some ESP32 SDK builds drop softAP after a failed
-            // WiFi.begin() attempt even when mode is WIFI_AP_STA.
+            // (C) STA failed — enable AP+STA for recovery
+            Serial.println("\n[Setup] WiFi TIMEOUT — enabling AP for recovery");
             WiFi.mode(WIFI_AP_STA);
             WiFi.softAP(apSSID.c_str(), apPass.c_str());
-            Serial.printf("[Setup] AP re-armed: %s\n", WiFi.softAPIP().toString().c_str());
+            Serial.printf("[Setup] Recovery AP: '%s' at %s\n",
+                          apSSID.c_str(), WiFi.softAPIP().toString().c_str());
+            Serial.println("[Setup] Open http://192.168.4.1/setup to fix WiFi creds");
         }
-    } else {
-        Serial.println("[Setup] No WiFi — open http://192.168.4.1/setup");
     }
 
     stateMutex = xSemaphoreCreateMutex();
@@ -208,10 +229,15 @@ void setup() {
     Serial.println("[Power] Idle: CPU @ 80 MHz, WiFi modem sleep ON");
 
     Serial.println("\n========================================");
-    Serial.printf( "  AP  URL : http://%s  (SSID: %s)\n",
-                   WiFi.softAPIP().toString().c_str(), apSSID.c_str());
-    if (WiFi.status() == WL_CONNECTED)
-        Serial.printf("  LAN URL : http://%s\n", WiFi.localIP().toString().c_str());
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("  Dashboard : http://meetingrecorder.local\n");
+        Serial.printf("  (or)      : http://%s\n",
+                      WiFi.localIP().toString().c_str());
+    }
+    if (WiFi.getMode() & WIFI_AP) {
+        Serial.printf("  AP setup  : http://%s  (SSID: %s)\n",
+                      WiFi.softAPIP().toString().c_str(), apSSID.c_str());
+    }
     Serial.println("  Press button or use web UI to start");
     Serial.println("========================================\n");
 }
@@ -227,11 +253,14 @@ void loop() {
         Serial.printf("[WiFi] AP ready at %s\n", WiFi.softAPIP().toString().c_str());
     }
 
-    // WiFi reconnect after config save
+    // WiFi reconnect after config save (new SSID/password entered via UI)
     if (needWifiReconnect) {
         needWifiReconnect = false;
-        Serial.println("[WiFi] Reconnecting...");
-        // disconnect(false) = keep AP running; avoid mode reset that drops hotspot
+        Serial.println("[WiFi] Switching to new credentials...");
+        // Keep AP up DURING the attempt so the user on the AP doesn't get
+        // disconnected if the new creds turn out to be wrong.
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.softAP(apSSID.c_str(), apPass.c_str());
         WiFi.disconnect(false);
         delay(300);
         WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
@@ -240,13 +269,29 @@ void loop() {
             delay(500); Serial.print(".");
         }
         if (WiFi.status() == WL_CONNECTED) {
-            WiFi.setSleep(true);   // see setup() — modem sleep saves ~30 mA
+            WiFi.setSleep(true);
             WiFi.setTxPower(WIFI_POWER_19_5dBm);
             Serial.printf("\n[WiFi] Connected — IP: %s\n",
                           WiFi.localIP().toString().c_str());
+
+            // Restart mDNS on the new network
+            MDNS.end();
+            if (MDNS.begin("meetingrecorder")) {
+                MDNS.addService("http", "tcp", 80);
+                Serial.println("[WiFi] mDNS active: http://meetingrecorder.local");
+            }
+
+            // Shut down AP now — the dashboard is reachable via mDNS so the
+            // hotspot is no longer needed.  User's phone/laptop can go back
+            // to the home WiFi and keep their internet.
+            delay(800);   // give the success page a moment to be served
+            WiFi.softAPdisconnect(true);
+            WiFi.mode(WIFI_STA);
+            Serial.println("[WiFi] AP disabled — STA-only mode (use meetingrecorder.local)");
+
             ntpInit();
         } else {
-            Serial.println("\n[WiFi] Reconnect failed — AP still up.");
+            Serial.println("\n[WiFi] Reconnect failed — AP stays up for retry");
             // Re-arm AP in case the failed STA attempt dropped it
             WiFi.softAP(apSSID.c_str(), apPass.c_str());
         }
