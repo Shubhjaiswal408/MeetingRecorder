@@ -253,6 +253,70 @@ void processTask(void* pv) {
     Serial.println("[ProcessTask] Started on core " + String(xPortGetCoreID()));
 
     for (;;) {
+        // ── 0. Factory reset request from /api/factory-reset ────────────────
+        // This task has the 20 KB stack we need for SD walking + recursive
+        // deletes; the web task only has 6 KB and crashes on devices with
+        // many stored meetings.
+        if (needFactoryReset) {
+            needFactoryReset = false;
+            Serial.println("\n[FactoryReset] ── BEGIN ─────────────────────────────");
+
+            // Cancel any in-flight meeting / processing state
+            meetingActive   = false;
+            finalStop       = false;
+            processingFinal = false;
+            xQueueReset(chunkQueue);
+
+            // Delete meetings ONE AT A TIME.  Each pass opens the root,
+            // finds the first meeting_* directory, closes the iterator,
+            // then deletes that directory.  Repeats until no more remain.
+            // Keeping only one String alive in the loop avoids the stack
+            // pressure that crashed the previous (web-task) implementation.
+            int deletedCount = 0;
+            const int SAFETY_LIMIT = 500;
+            while (deletedCount < SAFETY_LIMIT) {
+                String target;
+                {
+                    File root = SD.open("/");
+                    if (!root || !root.isDirectory()) {
+                        if (root) root.close();
+                        break;
+                    }
+                    File entry = root.openNextFile();
+                    while (entry) {
+                        String n = entry.name();
+                        int slash = n.lastIndexOf('/');
+                        if (slash >= 0) n = n.substring(slash + 1);
+                        bool isMeetingDir = entry.isDirectory() && n.startsWith("meeting_");
+                        entry.close();
+                        if (isMeetingDir) {
+                            target = "/" + n;
+                            break;
+                        }
+                        entry = root.openNextFile();
+                    }
+                    root.close();
+                }
+                if (target.length() == 0) break;
+                Serial.printf("[FactoryReset] Deleting %s\n", target.c_str());
+                deleteDirRecursive(target);
+                deletedCount++;
+                // Brief yield so the watchdog stays happy on large wipes
+                vTaskDelay(5 / portTICK_PERIOD_MS);
+            }
+            Serial.printf("[FactoryReset] %d meeting directories removed\n", deletedCount);
+
+            // Wipe credentials (config.json holds WiFi creds, API keys, AP creds)
+            if (SD.exists(CONFIG_FILE)) {
+                SD.remove(CONFIG_FILE);
+                Serial.println("[FactoryReset] config.json deleted");
+            }
+
+            Serial.println("[FactoryReset] ── COMPLETE — rebooting in 1 s ─────");
+            delay(1000);
+            ESP.restart();
+        }
+
         // ── 1. Pick up a ready chunk ────────────────────────────────────────
         // Block for up to 100 ms so the task yields instead of spin-polling.
         // xQueueReceive is thread-safe — no extra mutex needed.

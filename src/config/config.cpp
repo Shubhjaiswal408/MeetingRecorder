@@ -35,6 +35,7 @@ bool loadConfig() {
     openaiApiKey = doc["openai_key"] | "";
     apSSID       = doc["ap_ssid"]    | AP_SSID_DEFAULT;
     apPass       = doc["ap_pass"]    | AP_PASS_DEFAULT;
+    tzOffsetMin  = doc["tz_min"]     | 330;   // default IST (+5:30)
 
     Serial.printf("[Config] Loaded — SSID: %s  AP: %s  EL: %s...  OAI: %s...\n",
         wifiSSID.c_str(),
@@ -60,6 +61,7 @@ void saveConfig() {
     doc["openai_key"] = openaiApiKey;
     doc["ap_ssid"]    = apSSID;
     doc["ap_pass"]    = apPass;
+    doc["tz_min"]     = tzOffsetMin;
 
     serializeJson(doc, f);
     f.close();

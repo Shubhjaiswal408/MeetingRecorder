@@ -90,36 +90,44 @@ static void handleApiConfig() {
         server.send(405, "text/plain", "POST only");
         return;
     }
-    String ssid   = server.arg("ssid");
-    String pass   = server.arg("pass");
-    String el     = server.arg("el_key");
-    String oai    = server.arg("openai_key");
-    String apSsid = server.arg("ap_ssid");
-    String apPas  = server.arg("ap_pass");
+    String ssid = server.arg("ssid");
+    String pass = server.arg("pass");
+    String el   = server.arg("el_key");
+    String oai  = server.arg("openai_key");
+    String tz   = server.arg("tz_min");
 
-    if (ssid.length() > 0) wifiSSID     = ssid;
-    if (pass.length() > 0) wifiPass     = pass;
-    if (el.length()  > 4)  elApiKey     = el;
-    if (oai.length() > 4)  openaiApiKey = oai;
+    bool wifiChanged = false;
+    if (ssid.length() > 0 && ssid != wifiSSID) { wifiSSID = ssid; wifiChanged = true; }
+    if (pass.length() > 0)                     { wifiPass = pass; wifiChanged = true; }
+    if (el.length()  > 4)                      { elApiKey     = el;  }
+    if (oai.length() > 4)                      { openaiApiKey = oai; }
 
-    // AP settings: name needs ≥2 chars, password needs ≥8 (WPA2 minimum)
-    bool apChanged = false;
-    if (apSsid.length() >= 2 && apSsid != apSSID) { apSSID = apSsid; apChanged = true; }
-    if (apPas.length()  >= 8 && apPas  != apPass)  { apPass  = apPas;  apChanged = true; }
+    // Timezone — minutes from UTC; clamp to a sane range (−12 h … +14 h)
+    bool tzChanged = false;
+    if (tz.length() > 0) {
+        int v = tz.toInt();
+        if (v >= -720 && v <= 840 && v != tzOffsetMin) {
+            tzOffsetMin = v;
+            tzChanged   = true;
+        }
+    }
 
     saveConfig();
 
-    // Build response BEFORE scheduling AP restart (restart will drop the connection)
-    String resp = "{\"ok\":true,\"apChanged\":" + String(apChanged ? "true" : "false");
-    if (apChanged) resp += ",\"apSSID\":\"" + jsonEscape(apSSID) + "\"";
-    resp += "}";
-    server.send(200, "application/json", resp);
+    server.send(200, "application/json", "{\"ok\":true}");
 
-    // Flags handled in loop() — safely after HTTP response is sent
-    if (apChanged)           needApRestart     = true;
-    if (wifiSSID.length() > 0) needWifiReconnect = true;
+    // If timezone changed and we're connected, re-init NTP so the clock
+    // jumps to the new offset immediately instead of waiting for the
+    // next reboot.
+    if (tzChanged && WiFi.status() == WL_CONNECTED) {
+        ntpInit();
+    }
 
-    Serial.printf("[Config] Saved — AP changed: %s\n", apChanged ? "YES" : "no");
+    // WiFi reconnect is handled in loop() — safely after HTTP response
+    if (wifiChanged && wifiSSID.length() > 0) needWifiReconnect = true;
+
+    Serial.printf("[Config] Saved — wifi changed: %s, tz changed: %s (now %+d min)\n",
+                  wifiChanged ? "YES" : "no", tzChanged ? "YES" : "no", tzOffsetMin);
 }
 
 // ─── GET /api/history ────────────────────────────────────────────────────────
@@ -343,12 +351,10 @@ static void handleApiHistoryRegenerate() {
 }
 
 // ─── POST /api/factory-reset ─────────────────────────────────────────────────
-// Wipes ALL device state and reboots into AP-only setup mode:
-//   • /config.json deleted (WiFi creds, API keys, AP settings)
-//   • Every /meeting_* directory recursively deleted (transcripts, audio,
-//     summaries)
-//   • ESP.restart() after a short delay so the browser gets a clean
-//     response and renders its "device reset" screen
+// Sets a flag for processTask (which has the 20 KB stack we need for
+// recursively walking and deleting every meeting directory) and returns
+// immediately.  Doing the actual work in this handler crashed the webTask
+// with a stack-canary watchpoint when the device had many stored meetings.
 static void handleApiFactoryReset() {
     server.sendHeader("Access-Control-Allow-Origin",  "*");
     server.sendHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
@@ -359,53 +365,22 @@ static void handleApiFactoryReset() {
         return;
     }
 
-    Serial.println("\n[FactoryReset] ── BEGIN ─────────────────────────────");
-
-    // 1. Stop any active meeting first
     if (meetingActive) {
-        Serial.println("[FactoryReset] Stopping active meeting first");
-        meetingActive = false;
-        finalStop     = false;
+        server.send(409, "application/json",
+                    "{\"ok\":false,\"error\":\"stop the active meeting first\"}");
+        return;
     }
 
-    // 2. Delete all meeting directories
-    File root = SD.open("/");
-    if (root && root.isDirectory()) {
-        File entry = root.openNextFile();
-        // Collect names first — deleting while iterating corrupts FatFS state
-        const int MAX_DELETE = 200;
-        String toDelete[MAX_DELETE];
-        int dn = 0;
-        while (entry && dn < MAX_DELETE) {
-            String n = entry.name();
-            // entry.name() can be either bare ("meeting_xxx") or full ("/meeting_xxx")
-            int slash = n.lastIndexOf('/');
-            if (slash >= 0) n = n.substring(slash + 1);
-            if (entry.isDirectory() && n.startsWith("meeting_")) {
-                toDelete[dn++] = "/" + n;
-            }
-            entry.close();
-            entry = root.openNextFile();
-        }
-        root.close();
-        Serial.printf("[FactoryReset] Found %d meeting directories to delete\n", dn);
-        for (int i = 0; i < dn; i++) {
-            deleteDirRecursive(toDelete[i]);
-        }
-    }
+    Serial.println("[FactoryReset] Request received — scheduled in processTask");
+    needFactoryReset = true;
 
-    // 3. Delete config file (wipes WiFi creds + API keys + AP settings)
-    if (SD.exists(CONFIG_FILE)) {
-        SD.remove(CONFIG_FILE);
-        Serial.println("[FactoryReset] config.json deleted");
-    }
-
-    Serial.println("[FactoryReset] ── COMPLETE — rebooting in 2 s ────────");
-    server.send(200, "application/json", "{\"ok\":true,\"msg\":\"factory reset complete — rebooting\"}");
-
-    // Give the response a moment to be flushed before we reboot
-    delay(2000);
-    ESP.restart();
+    // Send the response now; processTask will do the SD work and reboot.
+    // The browser's fetch will succeed; the JS then renders its
+    // "device reset complete" screen.  If the reboot happens before the
+    // browser has fully received the response, the fetch error branch
+    // still shows the same screen.
+    server.send(200, "application/json",
+                "{\"ok\":true,\"msg\":\"factory reset scheduled — device will reboot in a few seconds\"}");
 }
 
 // ─── 404 ─────────────────────────────────────────────────────────────────────

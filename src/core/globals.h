@@ -68,6 +68,13 @@ extern volatile bool needWifiReconnect;
 // window — not just during the recording itself.
 extern volatile bool processingFinal;
 
+// Set by the /api/factory-reset web handler; consumed by processTask, which
+// has the 20 KB stack needed to walk the SD card, recursively delete every
+// meeting directory, and remove config.json without overflowing.  Doing
+// that work in the web task (6 KB stack) crashes with a stack canary
+// watchpoint on devices with many stored meetings.
+extern volatile bool needFactoryReset;
+
 extern String meetingDir;
 extern String fullTranscript;
 extern String finalTranscriptText; // full transcript snapshot saved before reset
@@ -85,6 +92,11 @@ extern String meetingTimestamp;
 extern String meetingDisplayTime;
 extern bool   ntpSynced;
 extern time_t meetingStartEpoch;
+
+// User-selected timezone offset in MINUTES from UTC (e.g. IST = +330,
+// EST = -300).  Loaded from config.json (key "tz_min"), used by ntp_time.h
+// when calling configTime() and when re-stamping after browser-time sync.
+extern int tzOffsetMin;
 
 // ─── Chunk queue ──────────────────────────────────────────────────────────────
 // Replaces the old single-slot (chunkReady + currentChunkPath) handoff.

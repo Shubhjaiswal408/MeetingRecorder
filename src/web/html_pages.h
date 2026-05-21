@@ -484,14 +484,46 @@ body{height:100%;height:100dvh;overflow:hidden;-webkit-overflow-scrolling:touch;
     </div>
 
     <div class="s-sec">
-      <div class="s-lbl">Hotspot (AP) Settings</div>
-      <div style="font-size:11.5px;color:var(--amber);padding:7px 10px;background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.18);border-radius:var(--rsm);margin-bottom:9px;line-height:1.55">
-        <svg style="width:13px;height:13px;vertical-align:middle;display:inline-block;flex-shrink:0" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 2L14.5 13.5H1.5L8 2z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12" r=".6" fill="currentColor" stroke="none"/></svg> Changing the hotspot name or password will <strong>disconnect your current browser session</strong>. You will need to reconnect to the new network and reload this page.
-      </div>
+      <div class="s-lbl">Timezone</div>
       <div class="fgrp">
-        <div class="frow"><div class="flbl">AP Name</div><input class="finp" id="cAPSSID" type="text" placeholder="MeetingRecorder" maxlength="32"></div>
-        <div class="frow"><div class="flbl">AP Password</div><input class="finp" id="cAPPass" type="password" placeholder="min 8 characters" maxlength="64"></div>
+        <div class="frow">
+          <div class="flbl">Time Zone</div>
+          <select class="finp" id="cTZ">
+            <option value="-720">UTC&minus;12:00 &mdash; Baker Island</option>
+            <option value="-660">UTC&minus;11:00 &mdash; American Samoa</option>
+            <option value="-600">UTC&minus;10:00 &mdash; Hawaii</option>
+            <option value="-540">UTC&minus;09:00 &mdash; Alaska</option>
+            <option value="-480">UTC&minus;08:00 &mdash; Pacific (PST)</option>
+            <option value="-420">UTC&minus;07:00 &mdash; Mountain (MST)</option>
+            <option value="-360">UTC&minus;06:00 &mdash; Central (CST)</option>
+            <option value="-300">UTC&minus;05:00 &mdash; Eastern (EST)</option>
+            <option value="-240">UTC&minus;04:00 &mdash; Atlantic</option>
+            <option value="-180">UTC&minus;03:00 &mdash; Argentina, Brazil</option>
+            <option value="-120">UTC&minus;02:00 &mdash; South Georgia</option>
+            <option value="-60">UTC&minus;01:00 &mdash; Azores</option>
+            <option value="0">UTC&plusmn;00:00 &mdash; London, Lisbon (GMT)</option>
+            <option value="60">UTC+01:00 &mdash; Berlin, Paris (CET)</option>
+            <option value="120">UTC+02:00 &mdash; Athens, Cairo (EET)</option>
+            <option value="180">UTC+03:00 &mdash; Moscow, Riyadh</option>
+            <option value="210">UTC+03:30 &mdash; Tehran</option>
+            <option value="240">UTC+04:00 &mdash; Dubai</option>
+            <option value="270">UTC+04:30 &mdash; Kabul</option>
+            <option value="300">UTC+05:00 &mdash; Karachi, Tashkent</option>
+            <option value="330" selected>UTC+05:30 &mdash; India (IST), Sri Lanka</option>
+            <option value="345">UTC+05:45 &mdash; Kathmandu</option>
+            <option value="360">UTC+06:00 &mdash; Dhaka</option>
+            <option value="390">UTC+06:30 &mdash; Yangon</option>
+            <option value="420">UTC+07:00 &mdash; Bangkok, Jakarta</option>
+            <option value="480">UTC+08:00 &mdash; Beijing, Singapore</option>
+            <option value="540">UTC+09:00 &mdash; Tokyo, Seoul (JST)</option>
+            <option value="570">UTC+09:30 &mdash; Adelaide</option>
+            <option value="600">UTC+10:00 &mdash; Sydney</option>
+            <option value="660">UTC+11:00 &mdash; Solomon Islands</option>
+            <option value="720">UTC+12:00 &mdash; New Zealand</option>
+          </select>
+        </div>
       </div>
+      <div style="font-size:11px;color:var(--t2);margin-top:6px">Used for timestamping meeting folders and the display clock.</div>
     </div>
 
     <div style="display:flex;gap:8px;margin-top:16px">
@@ -706,6 +738,14 @@ function updateUI(d){
   if(d.uptime) document.getElementById('aUp').textContent=fmtUp(d.uptime);
   document.getElementById('aNtp').textContent=d.ntpSynced?'Yes ✓':'No (browser time)';
   if(d.summaryFile&&d.summaryFile.length>2) document.getElementById('aFile').textContent=d.summaryFile;
+
+  /* Sync timezone dropdown to the device's saved value — but only on
+     first poll, so the user can change the selection without us
+     overwriting it on the next /api/status response. */
+  if(typeof d.tzMin==='number' && !window._tzSynced){
+    var sel=document.getElementById('cTZ');
+    if(sel){ sel.value=String(d.tzMin); window._tzSynced=true; }
+  }
 
   /* duration timer */
   if(state==='recording'&&!meetingStart){
@@ -1053,7 +1093,7 @@ async function sendChat(){
 
 /* ── Settings ───────────────────────── */
 function loadCfg(){
-  ['cSSID','cPass','cEL','cOAI','cAPSSID','cAPPass'].forEach(function(id){document.getElementById(id).value=''});
+  ['cSSID','cPass','cEL','cOAI'].forEach(function(id){document.getElementById(id).value=''});
 }
 async function saveCfg(){
   var p=new URLSearchParams();
@@ -1061,17 +1101,11 @@ async function saveCfg(){
   p.append('pass',document.getElementById('cPass').value);
   p.append('el_key',document.getElementById('cEL').value);
   p.append('openai_key',document.getElementById('cOAI').value);
-  p.append('ap_ssid',document.getElementById('cAPSSID').value);
-  p.append('ap_pass',document.getElementById('cAPPass').value);
+  p.append('tz_min',document.getElementById('cTZ').value);
   try{
     var r=await fetch('/api/config',{method:'POST',body:p});
     if(!r.ok){toast('Save failed — check connection','err');return;}
-    var data=await r.json();
-    if(data.apChanged){
-      toast('Hotspot renamed to "'+data.apSSID+'" — reconnect to continue','info');
-    } else {
-      toast('Saved ✓ WiFi reconnecting…','ok');
-    }
+    toast('Settings saved &check;','ok');
   }catch(e){toast('Error saving settings','err')}
 }
 
