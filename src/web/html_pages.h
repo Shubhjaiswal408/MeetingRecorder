@@ -509,6 +509,17 @@ body{height:100%;height:100dvh;overflow:hidden;-webkit-overflow-scrolling:touch;
         <div class="frow"><div class="flbl">Last Meeting</div><span class="finp-val" id="aFile">&#8212;</span></div>
       </div>
     </div>
+
+    <div class="s-sec" style="margin-top:32px;border:1px solid rgba(248,81,73,0.25);background:rgba(248,81,73,0.04);border-radius:var(--rsm);padding:14px 16px">
+      <div class="s-lbl" style="color:var(--red)">Danger Zone</div>
+      <div style="font-size:12px;color:var(--t2);line-height:1.55;margin-bottom:10px">
+        Factory reset wipes <strong>all saved meetings</strong> (transcripts, audio, summaries) and <strong>all credentials</strong> (WiFi, API keys, AP settings). The device reboots into setup mode &mdash; you will need to reconnect to its hotspot and configure everything from scratch.
+      </div>
+      <button class="btn btn-d" onclick="factoryReset()" style="width:auto">
+        <svg style="width:13px;height:13px;vertical-align:middle;display:inline-block;flex-shrink:0;margin-right:5px" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 2L14.5 13.5H1.5L8 2z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12" r=".6" fill="currentColor" stroke="none"/></svg>
+        Factory Reset
+      </button>
+    </div>
   </div>
 </div><!-- .main -->
 
@@ -826,6 +837,7 @@ async function loadHistory(showToast){
         html+='<button class="btn btn-ai btn-sm" onclick="askHistAI('+i+')" title="Ask AI about this meeting"><svg style="width:12px;height:12px;vertical-align:middle;display:inline-block;flex-shrink:0" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M13.5 10a1.5 1.5 0 01-1.5 1.5H5L2 14.5V3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5v6.5z"/></svg> Ask AI</button>';
         html+='<button class="btn btn-s btn-sm" onclick="dlHistSum('+i+')" title="Download summary"><svg style="width:12px;height:12px;vertical-align:middle;display:inline-block;flex-shrink:0" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 2.5v8M5.5 8l2.5 2.5 2.5-2.5"/><path d="M3 13.5h10"/></svg></button>';
       }
+      html+='<button class="btn btn-s btn-sm" onclick="regenMeeting('+i+')" title="Regenerate summary from transcript"><svg style="width:12px;height:12px;vertical-align:middle;display:inline-block;flex-shrink:0" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 8a5.5 5.5 0 019.4-3.9"/><polyline points="12 2 12 5 9 5"/><path d="M13.5 8a5.5 5.5 0 01-9.4 3.9"/><polyline points="4 14 4 11 7 11"/></svg></button>';
       html+='<button class="btn btn-d btn-sm" onclick="delMeeting('+i+')" title="Delete meeting"><svg style="width:12px;height:12px;vertical-align:middle;display:inline-block;flex-shrink:0" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><polyline points="2.5 4.5 13.5 4.5"/><path d="M5.5 4.5V3.5a1 1 0 011-1h3a1 1 0 011 1v1"/><path d="M6.5 7.5v4M9.5 7.5v4"/><path d="M3.5 4.5l.8 8.5a1.5 1.5 0 001.5 1.5h4.4a1.5 1.5 0 001.5-1.5l.8-8.5"/></svg></button>';
       html+='</div></div>';
       html+='<div class="hbody">';
@@ -905,6 +917,64 @@ function clearHistCtx(){
     toast('No current meeting summary — complete a meeting first','info');
   } else {
     toast('Switched to current meeting context','ok');
+  }
+}
+
+/* ── Factory Reset ─────────────────────── */
+async function factoryReset(){
+  if(!confirm('⚠️ FACTORY RESET\n\nThis will permanently delete:\n• All meetings (transcripts, audio, summaries)\n• WiFi credentials\n• API keys (ElevenLabs, OpenAI)\n• Hotspot (AP) settings\n\nThe device will reboot into setup mode.\n\nContinue?')) return;
+
+  // Second confirmation — type to confirm
+  var typed=prompt('Type RESET (in capitals) to confirm factory reset:');
+  if(typed!=='RESET'){
+    toast('Factory reset cancelled','info');
+    return;
+  }
+
+  toast('Wiping device&#8230;','info');
+  try{
+    var r=await fetch('/api/factory-reset',{method:'POST'});
+    var data;
+    try{data=await r.json()}catch(je){data={ok:r.ok}}
+    if(data.ok){
+      document.body.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,system-ui,sans-serif;color:#cdd6f4;background:#11111b;text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:20px">↺</div><div style="font-size:22px;font-weight:600;margin-bottom:12px">Device Reset Complete</div><div style="font-size:14px;color:#9399b2;max-width:400px;line-height:1.6">The device is rebooting and will come up in setup mode.<br><br>Look for the WiFi network <strong style="color:#89b4fa">MeetingRecorder</strong> on your phone, then open <strong style="color:#89b4fa">http://192.168.4.1/setup</strong> to reconfigure.</div></div>';
+    } else {
+      toast('Factory reset failed: '+(data.error||'server error'),'err');
+    }
+  }catch(e){
+    // After reboot, fetch will fail — that's actually the success signal.
+    document.body.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,system-ui,sans-serif;color:#cdd6f4;background:#11111b;text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:20px">↺</div><div style="font-size:22px;font-weight:600;margin-bottom:12px">Device Reset Complete</div><div style="font-size:14px;color:#9399b2;max-width:400px;line-height:1.6">The device is rebooting and will come up in setup mode.<br><br>Look for the WiFi network <strong style="color:#89b4fa">MeetingRecorder</strong> on your phone, then open <strong style="color:#89b4fa">http://192.168.4.1/setup</strong> to reconfigure.</div></div>';
+  }
+}
+
+async function regenMeeting(i){
+  if(!histItems[i]) return;
+  var dir=histItems[i].dir;
+  if(!confirm('Regenerate the summary for "'+dir+'"?\n\nThis will re-run the AI on the saved transcript and overwrite the current summary. Can take 30 sec to several minutes for long meetings.')) return;
+
+  var card=document.getElementById('hcard-'+i);
+  if(card) card.style.opacity='0.5';
+  toast('Regenerating summary&#8230; may take a few minutes for long meetings','info');
+
+  try{
+    var r=await fetch('/api/history/regenerate?dir='+encodeURIComponent(dir),{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'dir='+encodeURIComponent(dir)
+    });
+    var data;
+    try{data=await r.json()}catch(je){data={ok:r.ok}}
+    if(data.ok){
+      toast('Summary regenerated for "'+dir+'"','ok');
+      histLoaded=false;
+      loadHistory(false);
+    } else {
+      if(card) card.style.opacity='1';
+      toast('Regenerate failed: '+(data.error||'server error'),'err');
+    }
+  }catch(e){
+    if(card) card.style.opacity='1';
+    toast('Connection error during regenerate','err');
   }
 }
 

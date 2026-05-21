@@ -59,7 +59,7 @@ bool ensureWiFi() {
             return false;
         }
     }
-    WiFi.setSleep(false);
+    WiFi.setSleep(true);   // WiFi modem sleep for power saving
     Serial.println("\n[WiFi] Reconnected: " + WiFi.localIP().toString()
                    + "  RSSI: " + String(WiFi.RSSI()) + " dBm");
     return true;
@@ -161,63 +161,28 @@ String transcribeAudio(const String& path) {
     return "[STT failed after retries]";
 }
 
-// ─── _gptOnce (internal, single attempt) ─────────────────────────────────────
-static String _gptOnce(const String& transcript, bool isFinal) {
-    // System prompt for FINAL summaries explicitly tells GPT to cover the
-    // WHOLE meeting (start, middle and end) instead of just the most recent
-    // tactical decisions.  Earlier versions used "be concise and clear" which
-    // led GPT to compress the meeting down to its highlights — losing entire
-    // strategic-planning sections from the first half of long meetings.
-    String sys = isFinal
-        ? "You are a meticulous corporate meeting minutes-taker. Your job is "
-          "to capture EVERY major topic discussed across the entire meeting "
-          "from beginning to end — not just the most recent tactical decisions. "
-          "Cover strategic planning, project assignments, brainstorming and "
-          "decisions with equal thoroughness. Use clear markdown with "
-          "**bold** for emphasis, ## headings, and bullet lists. "
-          "Do NOT skip or condense any major topic."
-        : "You are a professional meeting summarizer. Be concise and clear.";
-
-    String user = isFinal
-        ? "Below is the FULL transcript of a meeting from start to finish. "
-          "Generate comprehensive meeting minutes covering EVERY section of "
-          "the meeting in chronological order. Do not omit topics that were "
-          "discussed earlier in favour of later ones — give each major topic "
-          "its own treatment.\n\n"
-          "Use this exact markdown structure:\n\n"
-          "## Overview\n"
-          "3-4 sentences covering the meeting's purpose and the main themes that came up.\n\n"
-          "## Key Discussion Points\n"
-          "Cover EVERY major topic discussed, in roughly chronological order. "
-          "Use sub-bullets for specifics. Include names of people, products, "
-          "vendors, projects, numbers and deadlines mentioned.\n\n"
-          "## Decisions Made\n"
-          "Every decision reached during the meeting, as a bulleted list.\n\n"
-          "## Action Items\n"
-          "Who is doing what, by when. One bullet per action.\n\n"
-          "## Names, Dates & Numbers\n"
-          "Compact reference list of people, dates, vendors, products, "
-          "events, metrics or any other concrete data mentioned.\n\n"
-          "---\n\nTRANSCRIPT:\n" + transcript
-        : "Meeting in progress. Brief rolling summary (max 120 words):\n"
-          "1. What's been discussed (2 sentences)\n"
-          "2. Key points (3-5 bullets)\n"
-          "3. Action items so far\n\nTRANSCRIPT:\n" + transcript;
-
-    // max_tokens: 2500 for final (~1900 words — comprehensive minutes for a
-    // multi-section meeting), 512 for rolling (kept compact for live UI).
-    String maxTok = isFinal ? "2500" : "512";
-
-    String body =
-        "{\"model\":\"gpt-4o-mini\","
-        "\"messages\":["
-        "{\"role\":\"system\",\"content\":\"" + jsonEscape(sys)  + "\"},"
-        "{\"role\":\"user\",\"content\":\""   + jsonEscape(user) + "\"}"
-        "],\"temperature\":0.4,\"max_tokens\":" + maxTok + "}";
+// ─── _gptCallOnce (internal, single attempt, fully parameterised) ────────────
+// Generic GPT-4o-mini call.  Caller supplies the system prompt, user prompt,
+// max_tokens and timeout — used by both the regular summariser and the
+// chunked map-reduce flow for unbounded-length meetings.
+static String _gptCallOnce(const String& sys, const String& user,
+                           int maxTokens, int timeoutMs) {
+    String body;
+    // Pre-reserve a rough capacity to avoid many incremental reallocs while
+    // we build the body String.  Saves heap churn on long transcripts.
+    body.reserve(sys.length() + user.length() + 256);
+    body += "{\"model\":\"gpt-4o-mini\",\"messages\":[";
+    body += "{\"role\":\"system\",\"content\":\"";
+    body += jsonEscape(sys);
+    body += "\"},{\"role\":\"user\",\"content\":\"";
+    body += jsonEscape(user);
+    body += "\"}],\"temperature\":0.4,\"max_tokens\":";
+    body += String(maxTokens);
+    body += "}";
 
     HTTPClient http;
     http.begin(OPENAI_URL);
-    http.setTimeout(30000);
+    http.setTimeout(timeoutMs);
     http.setReuse(false);
     http.addHeader("Content-Type",  "application/json");
     http.addHeader("Authorization", "Bearer " + openaiApiKey);
@@ -238,9 +203,9 @@ static String _gptOnce(const String& transcript, bool isFinal) {
     return "";
 }
 
-// ─── generateSummary (public, with retry) ────────────────────────────────────
-String generateSummary(const String& transcript, bool isFinal) {
-    if (transcript.length() < 10) return "[Not enough transcript yet]";
+// ─── _gptCallRetry (internal, with 3-attempt + WiFi-bounce retry) ────────────
+static String _gptCallRetry(const String& sys, const String& user,
+                            int maxTokens, int timeoutMs) {
     if (openaiApiKey.length() < 10) {
         Serial.println("[GPT] No OpenAI API key — visit Setup page.");
         return "[No OpenAI API key configured — visit Setup page]";
@@ -248,7 +213,7 @@ String generateSummary(const String& transcript, bool isFinal) {
     for (int attempt = 1; attempt <= 3; attempt++) {
         Serial.printf("[GPT] Attempt %d/3\n", attempt);
         if (!ensureWiFi()) { delay(3000); continue; }
-        String result = _gptOnce(transcript, isFinal);
+        String result = _gptCallOnce(sys, user, maxTokens, timeoutMs);
         if (result.length() > 0) return result;
         if (attempt < 3) {
             uint32_t wait = attempt * 3000;
@@ -259,4 +224,185 @@ String generateSummary(const String& transcript, bool isFinal) {
         }
     }
     return "[GPT failed after 3 attempts]";
+}
+
+// ─── generateSummary (public, with retry) ────────────────────────────────────
+// Used for:
+//   - rolling summaries during a meeting (isFinal=false, lightweight)
+//   - final summary on stop for SHORT meetings that fit in one GPT call
+//     (the chunked/synthesised path takes over for long ones — see
+//     generateSegmentSummary + synthesizeFinalSummary)
+String generateSummary(const String& transcript, bool isFinal) {
+    if (transcript.length() < 10) return "[Not enough transcript yet]";
+
+    String sys = isFinal
+        ? "You are a meticulous meeting minutes-taker. Your job is to "
+          "summarise EXACTLY what was discussed in the transcript provided — "
+          "nothing else.\n\n"
+          "ABSOLUTE RULES:\n"
+          "1. NEVER use square brackets [ ] in your output. No [Insert Date], "
+          "no [Team Member Name], no [Project Lead's Name], no [List items], "
+          "no [Counselor's Name]. If a name or detail wasn't mentioned in "
+          "the transcript, write 'someone' / 'a team member' / 'TBD' "
+          "instead — but never with square brackets.\n"
+          "2. NEVER use generic meeting-minutes templates with sections like "
+          "'Opening Remarks', 'Review of Previous Minutes', 'Open Forum', "
+          "'Closing Remarks' unless those were actually discussed.\n"
+          "3. Only include content the transcript explicitly mentions.\n"
+          "4. Use ## (two hash marks) for ALL section headings — never use "
+          "'1.', '2.', '3.' for section titles. Numbers are for actual "
+          "ordered lists only.\n"
+          "5. Use - (dash) for bullet items.\n"
+          "6. Use **bold** for emphasis within text only — not for headings."
+        : "You are a meeting summariser. Summarise ONLY what was said in the "
+          "transcript provided. Never invent placeholders or template "
+          "sections. Use ## for headings, - for bullets.";
+
+    String user = isFinal
+        ? "Below is the FULL transcript of a meeting from start to finish. "
+          "Summarise EVERY topic that was actually discussed — in "
+          "chronological order, without skipping earlier topics in favour of "
+          "later ones.\n\n"
+          "Output EXACTLY in this format (## for headings, - for bullets):\n\n"
+          "## Overview\n"
+          "3-4 sentences on what the meeting was actually about, based on the "
+          "transcript. Do not invent a purpose if none was stated.\n\n"
+          "## Key Discussion Points\n"
+          "- Every major topic that was discussed, in chronological order\n"
+          "- Use sub-bullets (indented with 2 spaces) for specifics\n"
+          "- Include real names of people, products, vendors, numbers and "
+          "deadlines from the transcript\n\n"
+          "## Decisions Made\n"
+          "- Every decision actually reached during the meeting\n"
+          "- If none, write: 'No formal decisions recorded in this meeting.'\n\n"
+          "## Action Items\n"
+          "- Who is doing what, by when (only if mentioned)\n"
+          "- If none, write: 'No specific action items recorded.'\n\n"
+          "## Names, Dates & Numbers\n"
+          "- Real people, vendors, products, dates, metrics from the transcript\n"
+          "- If none mentioned, write: 'None mentioned.'\n\n"
+          "REMINDERS:\n"
+          "- Do NOT use [Insert ...] placeholders.\n"
+          "- Do NOT invent template sections like 'Opening Remarks' or 'SWOT "
+          "Analysis' unless they were actually discussed.\n"
+          "- Do NOT use 1./2./3. as section headings. Only ##.\n\n"
+          "---\n\nTRANSCRIPT:\n" + transcript
+        : "Generate a brief rolling summary (max 120 words) of what has been "
+          "discussed in the meeting so far, based ONLY on the transcript "
+          "below. Use this format (do NOT use 1./2./3. as headings):\n\n"
+          "## So Far\n"
+          "2 sentences on the main topic discussed.\n\n"
+          "## Key Points\n"
+          "- 3-5 bullet points of what was said\n\n"
+          "## Action Items So Far\n"
+          "- Any action items mentioned, or write 'None yet'\n\n"
+          "Do NOT invent placeholders. Only summarise actual content.\n\n"
+          "TRANSCRIPT:\n" + transcript;
+
+    int maxTok  = isFinal ? 2500  : 512;
+    int timeout = isFinal ? 90000 : 30000;
+    return _gptCallRetry(sys, user, maxTok, timeout);
+}
+
+// ─── generateSegmentSummary — one segment of a long meeting ──────────────────
+// Map step of the map-reduce.  Asked to be THOROUGH (not concise), because
+// detail at this stage is what makes the final synthesis comprehensive.
+String generateSegmentSummary(const String& transcriptSegment,
+                              int segNum, int totalSeg) {
+    if (transcriptSegment.length() < 10) return "";
+
+    String sys =
+        "You are extracting facts from ONE segment of a longer meeting "
+        "transcript. The goal is detail — every topic, name, vendor, number, "
+        "decision and action that actually appears in this segment.\n\n"
+        "ABSOLUTE RULES:\n"
+        "1. NEVER use square brackets [ ] for placeholders. No [Insert Date], "
+        "no [Team Member Name], no [List items]. If something wasn't said, "
+        "write 'someone' / 'a team member' / 'TBD' — never square brackets.\n"
+        "2. NEVER use generic template sections like 'Opening Remarks' that "
+        "are not in the transcript.\n"
+        "3. Use ## for headings — never '1.', '2.', '3.' for section titles.\n"
+        "4. Use - (dash) for bullet items.\n"
+        "5. If a section has nothing in this segment, write 'None in this "
+        "segment.' rather than inventing content.";
+
+    String user;
+    user.reserve(transcriptSegment.length() + 1024);
+    user += "This is segment ";
+    user += String(segNum);
+    user += " of ";
+    user += String(totalSeg);
+    user += " from a meeting transcript. Extract everything that was "
+            "actually said in this segment using EXACTLY this format:\n\n"
+            "## Topics Discussed\n"
+            "- Every topic with sub-bullets for specifics\n\n"
+            "## Decisions\n"
+            "- Every decision reached, or 'None in this segment.'\n\n"
+            "## Action Items\n"
+            "- Who/what/when, or 'None in this segment.'\n\n"
+            "## Names, Dates & Numbers\n"
+            "- Real names, vendors, products, dates, metrics actually said\n\n"
+            "Do NOT use placeholders. Do NOT use 1./2. as headings.\n\n"
+            "---\n\nSEGMENT TRANSCRIPT:\n";
+    user += transcriptSegment;
+
+    // 1500 tokens (~1100 words) per segment is plenty for a detailed extract.
+    return _gptCallRetry(sys, user, 1500, 60000);
+}
+
+// ─── synthesizeFinalSummary — reduce step ────────────────────────────────────
+// Takes the concatenated segment summaries and produces the single, polished
+// final meeting summary that the user sees in the UI.
+String synthesizeFinalSummary(const String& combinedSegmentSummaries) {
+    if (combinedSegmentSummaries.length() < 30) return "";
+
+    String sys =
+        "You are merging multiple segment summaries of ONE meeting into a "
+        "single polished final summary. Use ONLY the information present in "
+        "the segment summaries below.\n\n"
+        "ABSOLUTE RULES:\n"
+        "1. NEVER use square brackets [ ] in your output. No [Insert Name], "
+        "no [Team Member Name], no [Counselor's Name]. If a name wasn't "
+        "specified in the segments, write 'someone' / 'a team member' / "
+        "'TBD' — never square brackets.\n"
+        "2. NEVER use generic meeting-minutes templates with sections like "
+        "'Opening Remarks', 'Review of Previous Minutes', 'Open Forum', "
+        "'Closing Remarks' unless those were actually mentioned.\n"
+        "3. Use ## for ALL section headings — never '1.', '2.', '3.'.\n"
+        "4. Use - (dash) for bullets.\n"
+        "5. Merge duplicate items across segments, but do NOT drop any "
+        "topic that appears in any segment.";
+
+    String user;
+    user.reserve(combinedSegmentSummaries.length() + 1024);
+    user += "Below are detailed summaries of consecutive segments of a "
+            "single meeting in chronological order. Merge them into ONE "
+            "final summary using EXACTLY this format:\n\n"
+            "## Overview\n"
+            "4-5 sentences on what the meeting was actually about, based on "
+            "the segment summaries.\n\n"
+            "## Key Discussion Points\n"
+            "- Every major topic discussed across all segments, in "
+            "chronological order\n"
+            "- Use sub-bullets for specifics\n"
+            "- Include real names, products, vendors, numbers, deadlines\n\n"
+            "## Decisions Made\n"
+            "- Every decision, deduplicated\n"
+            "- If none, write 'No formal decisions recorded in this meeting.'\n\n"
+            "## Action Items\n"
+            "- Who/what/when, deduplicated\n"
+            "- If none, write 'No specific action items recorded.'\n\n"
+            "## Names, Dates & Numbers\n"
+            "- Deduplicated list of real names, vendors, products, dates, "
+            "metrics from the segments\n"
+            "- If none, write 'None mentioned.'\n\n"
+            "REMINDERS:\n"
+            "- Do NOT use [Insert ...] placeholders.\n"
+            "- Do NOT invent template sections that aren't in the segments.\n"
+            "- Do NOT use 1./2./3. as section headings — only ##.\n\n"
+            "---\n\nSEGMENT SUMMARIES:\n";
+    user += combinedSegmentSummaries;
+
+    // 3000 tokens (~2200 words) for the final polished output.
+    return _gptCallRetry(sys, user, 3000, 120000);
 }

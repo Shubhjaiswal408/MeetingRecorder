@@ -26,6 +26,23 @@ String transcribeAudio(const String& path);
 // Retries up to 3 times with progressive back-off.
 String generateSummary(const String& transcript, bool isFinal);
 
+// ─── Long-meeting (chunked / map-reduce) summarisation ───────────────────────
+// For meetings that exceed the practical single-call budget we summarise the
+// transcript in segments and then synthesise one comprehensive final summary
+// from the segment summaries.  This lets a single ESP32 with bounded RAM
+// summarise arbitrarily long meetings (4 h, 8 h, all-day) by never holding
+// more than one segment at a time.
+
+// Summarise one segment of a longer transcript.
+// segNum/totalSeg are 1-indexed and only inform the prompt (so the model
+// knows where this segment sits in the meeting timeline).
+String generateSegmentSummary(const String& transcriptSegment,
+                              int segNum, int totalSeg);
+
+// Take the concatenated segment summaries and merge them into ONE polished
+// final meeting summary with the standard 5-section structure.
+String synthesizeFinalSummary(const String& combinedSegmentSummaries);
+
 // ─── JSON string escape ───────────────────────────────────────────────────────
 // Escapes a String so it is safe to embed in a JSON value.
 String jsonEscape(const String& s);

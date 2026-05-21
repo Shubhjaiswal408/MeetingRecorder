@@ -62,6 +62,11 @@ extern String openaiApiKey;
 extern volatile bool meetingActive;
 extern volatile bool finalStop;
 extern volatile bool needWifiReconnect;
+// True while processTask is busy generating the final summary (including the
+// multi-call map-reduce path).  Used by the LED state machine in loop() to
+// blink the recording LED through the whole "stop pressed → summary ready"
+// window — not just during the recording itself.
+extern volatile bool processingFinal;
 
 extern String meetingDir;
 extern String fullTranscript;
