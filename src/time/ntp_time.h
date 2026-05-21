@@ -24,16 +24,17 @@ static const char* NTP1 = "pool.ntp.org";
 static const char* NTP2 = "time.google.com";
 static const char* NTP3 = "time.cloudflare.com";
 
-// ── Timezone offset in seconds (IST = UTC+5:30 = 19800) ───────────
-#ifndef TZ_OFFSET_SEC
-#define TZ_OFFSET_SEC 19800   // UTC + 5h 30m  (India Standard Time)
-#endif
+// Timezone offset is now a RUNTIME value loaded from config.json
+// (see `tzOffsetMin` in globals.h).  Default = IST (+5:30 = 330 min).
+// Users can change it from the Settings tab.
 
 // ─────────────────────────────────────────────────────────────────
-//  ntpInit() — call once after WiFi STA connects
+//  ntpInit() — call once after WiFi STA connects, or after the user
+//  changes the timezone in Settings (handleApiConfig calls this
+//  again so the clock immediately reflects the new offset).
 // ─────────────────────────────────────────────────────────────────
 inline void ntpInit() {
-    configTime(TZ_OFFSET_SEC, 0, NTP1, NTP2, NTP3);
+    configTime(tzOffsetMin * 60, 0, NTP1, NTP2, NTP3);
     struct tm ti;
     unsigned long t0 = millis();
     while (!getLocalTime(&ti, 100) && millis() - t0 < 5000) delay(200);

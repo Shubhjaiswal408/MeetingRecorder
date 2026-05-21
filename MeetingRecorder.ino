@@ -68,6 +68,7 @@ volatile bool finalStop         = false;
 volatile bool processingFinal   = false;   // true during final-summary generation
 volatile bool needWifiReconnect = false;
 volatile bool needApRestart     = false;   // set when AP SSID/pass changed via UI
+volatile bool needFactoryReset  = false;   // set by /api/factory-reset, handled in processTask
 
 // Chunk queue — replaces single-slot chunkReady/currentChunkPath.
 // Defined extern in globals.h; created in setup().
@@ -85,6 +86,10 @@ String meetingTimestamp   = "";    // ← FIX Bug 4
 String meetingDisplayTime = "";    // ← FIX Bug 4
 bool   ntpSynced          = false; // ← FIX Bug 4
 time_t meetingStartEpoch  = 0;     // ← FIX Bug 4
+
+// Default timezone: IST (+5:30 = 330 min).  Loaded from config.json at boot;
+// changeable from the Settings tab via the timezone dropdown.
+int tzOffsetMin = 330;
 
 // RTOS handles
 TaskHandle_t      recordTaskHandle;

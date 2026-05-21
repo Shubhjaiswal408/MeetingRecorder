@@ -98,6 +98,7 @@ void handleApiStatus() {
     json += "\"freeRam\":"          + String(ESP.getFreeHeap())     + ",";
     json += "\"uptime\":"           + String(millis() / 1000)       + ",";
     json += "\"ntpSynced\":"        + String(ntpSynced ? "true" : "false") + ",";
+    json += "\"tzMin\":"            + String(tzOffsetMin) + ",";
     json += "\"rollingSummary\":\"" + jsonEscape(snapRolling)       + "\",";
     json += "\"finalSummary\":\""   + jsonEscape(snapFinal)         + "\",";
     json += "\"transcript\":\""     + jsonEscape(snapTranscript)    + "\",";
