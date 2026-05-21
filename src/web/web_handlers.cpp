@@ -383,6 +383,51 @@ static void handleApiFactoryReset() {
                 "{\"ok\":true,\"msg\":\"factory reset scheduled — device will reboot in a few seconds\"}");
 }
 
+// ─── POST /api/reset-credentials ─────────────────────────────────────────────
+// Light-weight version of factory reset: clears WiFi credentials, API keys
+// and AP settings (i.e. /config.json) but LEAVES every stored meeting on
+// the SD card untouched.  Useful when the user wants to change networks
+// or move the device to a new owner without losing their recordings.
+//
+// Runs inline (small amount of work — single file deletion) and reboots
+// straight from this handler.  No need to offload to processTask.
+static void handleApiResetCredentials() {
+    server.sendHeader("Access-Control-Allow-Origin",  "*");
+    server.sendHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+    server.sendHeader("Cache-Control", "no-cache");
+
+    if (server.method() != HTTP_POST) {
+        server.send(405, "text/plain", "POST only");
+        return;
+    }
+
+    if (meetingActive) {
+        server.send(409, "application/json",
+                    "{\"ok\":false,\"error\":\"stop the active meeting first\"}");
+        return;
+    }
+
+    Serial.println("\n[ResetCreds] ── BEGIN ─────────────────────────────");
+
+    if (SD.exists(CONFIG_FILE)) {
+        SD.remove(CONFIG_FILE);
+        Serial.println("[ResetCreds] config.json deleted");
+    } else {
+        Serial.println("[ResetCreds] no config.json found — nothing to wipe");
+    }
+
+    Serial.println("[ResetCreds] ── COMPLETE — rebooting in 1 s ─────────");
+    server.send(200, "application/json",
+                "{\"ok\":true,\"msg\":\"credentials cleared — device will reboot\"}");
+
+    // SD.end() so the next boot finds the card cleanly (see same pattern
+    // in the full factory reset path).
+    delay(800);
+    SD.end();
+    delay(200);
+    ESP.restart();
+}
+
 // ─── 404 ─────────────────────────────────────────────────────────────────────
 static void handle404() {
     server.send(404, "text/plain", "Not found");
@@ -399,6 +444,7 @@ void startWebServer() {
     server.on("/api/history/delete",     HTTP_POST, handleApiHistoryDelete);
     server.on("/api/history/regenerate", HTTP_POST, handleApiHistoryRegenerate);
     server.on("/api/factory-reset",      HTTP_POST, handleApiFactoryReset);
+    server.on("/api/reset-credentials",  HTTP_POST, handleApiResetCredentials);
 
     // Extra routes from web_extras
     server.on("/api/status",  HTTP_GET,  handleApiStatus);

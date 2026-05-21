@@ -544,8 +544,19 @@ body{height:100%;height:100dvh;overflow:hidden;-webkit-overflow-scrolling:touch;
 
     <div class="s-sec" style="margin-top:32px;border:1px solid rgba(248,81,73,0.25);background:rgba(248,81,73,0.04);border-radius:var(--rsm);padding:14px 16px">
       <div class="s-lbl" style="color:var(--red)">Danger Zone</div>
+
+      <div style="font-size:12px;color:var(--t2);line-height:1.55;margin-bottom:8px">
+        <strong style="color:var(--t1)">Reset Credentials Only</strong> &mdash; clears WiFi credentials and API keys, but <strong>keeps all your saved meetings</strong>. The device reboots into setup mode so you can configure new credentials. Use this when switching networks or changing keys.
+      </div>
+      <button class="btn btn-s" onclick="resetCreds()" style="width:auto;margin-bottom:14px">
+        <svg style="width:13px;height:13px;vertical-align:middle;display:inline-block;flex-shrink:0;margin-right:5px" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 8a5.5 5.5 0 019.4-3.9"/><polyline points="12 2 12 5 9 5"/><path d="M13.5 8a5.5 5.5 0 01-9.4 3.9"/><polyline points="4 14 4 11 7 11"/></svg>
+        Reset Credentials Only
+      </button>
+
+      <div style="height:1px;background:rgba(248,81,73,0.18);margin:6px 0 14px"></div>
+
       <div style="font-size:12px;color:var(--t2);line-height:1.55;margin-bottom:10px">
-        Factory reset wipes <strong>all saved meetings</strong> (transcripts, audio, summaries) and <strong>all credentials</strong> (WiFi, API keys, AP settings). The device reboots into setup mode &mdash; you will need to reconnect to its hotspot and configure everything from scratch.
+        <strong style="color:var(--red)">Factory Reset</strong> &mdash; wipes <strong>everything</strong>: all saved meetings (transcripts, audio, summaries) <strong>and</strong> all credentials. The device reboots into setup mode &mdash; you will need to configure everything from scratch.
       </div>
       <button class="btn btn-d" onclick="factoryReset()" style="width:auto">
         <svg style="width:13px;height:13px;vertical-align:middle;display:inline-block;flex-shrink:0;margin-right:5px" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 2L14.5 13.5H1.5L8 2z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12" r=".6" fill="currentColor" stroke="none"/></svg>
@@ -957,6 +968,26 @@ function clearHistCtx(){
     toast('No current meeting summary — complete a meeting first','info');
   } else {
     toast('Switched to current meeting context','ok');
+  }
+}
+
+/* ── Reset Credentials Only ─────────────── */
+async function resetCreds(){
+  if(!confirm('Reset Credentials Only\n\nThis will clear:\n• WiFi credentials\n• ElevenLabs API key\n• OpenAI API key\n\nIt will NOT touch your saved meetings.\n\nDevice will reboot into setup mode. Continue?')) return;
+
+  toast('Clearing credentials&#8230;','info');
+  try{
+    var r=await fetch('/api/reset-credentials',{method:'POST'});
+    var data;
+    try{data=await r.json()}catch(je){data={ok:r.ok}}
+    if(data.ok){
+      document.body.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,system-ui,sans-serif;color:#cdd6f4;background:#11111b;text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:20px">↺</div><div style="font-size:22px;font-weight:600;margin-bottom:12px">Credentials Cleared</div><div style="font-size:14px;color:#9399b2;max-width:400px;line-height:1.6">Your saved meetings are intact.<br><br>The device is rebooting into setup mode &mdash; connect to the <strong style="color:#89b4fa">MeetingRecorder</strong> hotspot and open <strong style="color:#89b4fa">http://192.168.4.1/setup</strong> to re-enter WiFi and API keys.</div></div>';
+    } else {
+      toast('Reset failed: '+(data.error||'server error'),'err');
+    }
+  }catch(e){
+    /* Fetch will fail mid-reboot — that's the success signal */
+    document.body.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,system-ui,sans-serif;color:#cdd6f4;background:#11111b;text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:20px">↺</div><div style="font-size:22px;font-weight:600;margin-bottom:12px">Credentials Cleared</div><div style="font-size:14px;color:#9399b2;max-width:400px;line-height:1.6">Your saved meetings are intact.<br><br>The device is rebooting into setup mode &mdash; connect to the <strong style="color:#89b4fa">MeetingRecorder</strong> hotspot and open <strong style="color:#89b4fa">http://192.168.4.1/setup</strong> to re-enter WiFi and API keys.</div></div>';
   }
 }
 
