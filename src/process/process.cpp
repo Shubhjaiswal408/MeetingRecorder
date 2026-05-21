@@ -1,7 +1,7 @@
 /*
  * process.cpp
  * ─────────────────────────────────────────────────────────────────
- * BUG FIXED (in addition to v3 fixes):
+ * BUG FIXED:
  *   The reset block at meeting end immediately cleared finalTranscriptText
  *   with `finalTranscriptText = ""` on the very next line after setting it.
  *   This meant the Transcript tab always showed nothing after a meeting ended.

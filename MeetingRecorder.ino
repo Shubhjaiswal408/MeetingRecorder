@@ -81,7 +81,7 @@ String finalSummaryText    = "";
 int    chunkIndex          = 0;
 int    wordCount           = 0;    // ← FIX Bug 4: was missing
 
-// Time / Naming (v2 globals — all were missing from old .ino)
+// Time / Naming
 String meetingTimestamp   = "";    // ← FIX Bug 4
 String meetingDisplayTime = "";    // ← FIX Bug 4
 bool   ntpSynced          = false; // ← FIX Bug 4
@@ -118,7 +118,7 @@ void setup() {
     delay(500);
 
     Serial.println("\n========================================");
-    Serial.println("   XIAO ESP32-S3  MEETING RECORDER v3");
+    Serial.println("   XIAO ESP32-S3  MEETING RECORDER");
     Serial.println("========================================");
 
     // Bluetooth: this project never uses BT — turn the controller fully off

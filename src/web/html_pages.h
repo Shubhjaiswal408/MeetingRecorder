@@ -1,7 +1,7 @@
 /*
  * html_pages.h
  * ─────────────────────────────────────────────────────────────────
- * Changes from v3:
+ * Bug fixes:
  *   1. Complete visual redesign with Inter font
  *   2. Transcript tab shows FINAL transcript after meeting ends
  *      (uses new finalTranscriptText global via /api/status)

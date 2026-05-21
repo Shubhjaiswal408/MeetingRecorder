@@ -1,6 +1,6 @@
 #pragma once
 /*
- * globals.h  (v2 — with NTP time, chat, and enhanced state)
+ * globals.h
  * ─────────────────────────────────────────────────────────────────
  * Central header included by every module.
  * Declares (extern) every shared variable so all .cpp files can

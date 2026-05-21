@@ -2,7 +2,7 @@
 /*
  * web_extras.h
  * ─────────────────────────────────────────────────────────────────
- * Declares the new HTTP route handlers added in v2.
+ * Declares the extra HTTP route handlers split out of web_handlers.cpp.
  * Register them in startWebServer() inside web_handlers.cpp:
  *
  *   server.on("/api/status",  HTTP_GET,  handleApiStatus);

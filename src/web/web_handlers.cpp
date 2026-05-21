@@ -1,7 +1,7 @@
 /*
  * web_handlers.cpp
  * ─────────────────────────────────────────────────────────────────
- * BUGS FIXED (in addition to v3 fixes):
+ * BUGS FIXED:
  *
  *   Bug A — handleApiHistory SD iterator corruption:
  *     Old code opened summary files WHILE the root directory iterator
@@ -400,7 +400,7 @@ void startWebServer() {
     server.on("/api/history/regenerate", HTTP_POST, handleApiHistoryRegenerate);
     server.on("/api/factory-reset",      HTTP_POST, handleApiFactoryReset);
 
-    // v2 routes from web_extras
+    // Extra routes from web_extras
     server.on("/api/status",  HTTP_GET,  handleApiStatus);
     server.on("/api/chat",    HTTP_POST, handleApiChat);
     server.on("/api/settime", HTTP_POST, handleApiSetTime);
