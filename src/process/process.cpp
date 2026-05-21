@@ -313,6 +313,10 @@ void processTask(void* pv) {
             }
 
             Serial.println("[FactoryReset] ── COMPLETE — rebooting in 1 s ─────");
+            // Cleanly release the SD card so the next boot finds it on the
+            // first try.  Without this the SPI/SD state carries over after
+            // ESP.restart() and the next setup() sees "SD init FAILED".
+            SD.end();
             delay(1000);
             ESP.restart();
         }

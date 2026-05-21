@@ -132,9 +132,28 @@ void setup() {
     digitalWrite(LED_BUILTIN, HIGH);
     Serial.println("[Setup] GPIO OK");
 
-    // SD card
+    // Pre-init the SD chip-select pin to a clean HIGH state.  After a
+    // soft reset the previous SPI transaction can leave CS in an
+    // ambiguous state and SD.begin() then fails.  Holding CS high for
+    // a few ms gives the card time to release the bus before we try
+    // to talk to it again.
+    pinMode(SD_CS_PIN, OUTPUT);
+    digitalWrite(SD_CS_PIN, HIGH);
+    delay(50);
+
+    // SD card — retry a few times with backoff.  Many SD cards take
+    // an extra moment to come up after a warm reboot (ESP.restart()
+    // doesn't power-cycle them).  Without retries the device shows
+    // "FAILED" and halts forever on every second boot.
     Serial.print("[Setup] SD init... ");
-    if (!SD.begin(SD_CS_PIN)) {
+    bool sdOk = false;
+    for (int attempt = 1; attempt <= 5; attempt++) {
+        if (SD.begin(SD_CS_PIN)) { sdOk = true; break; }
+        Serial.printf("(attempt %d failed) ", attempt);
+        SD.end();
+        delay(300 * attempt);   // 300, 600, 900, 1200 ms
+    }
+    if (!sdOk) {
         Serial.println("FAILED — card not found or not FAT32");
         while (1) delay(500);
     }
