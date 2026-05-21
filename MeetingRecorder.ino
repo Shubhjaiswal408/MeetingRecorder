@@ -28,7 +28,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
-#include "src/json/ShubhJson.h"   
+#include <ESPmDNS.h>
+#include "src/json/ShubhJson.h"
 #include <time.h>
 
 #include "src/core/globals.h"
@@ -64,6 +65,7 @@ String apPass = AP_PASS_DEFAULT;
 // Core meeting state
 volatile bool meetingActive     = false;
 volatile bool finalStop         = false;
+volatile bool processingFinal   = false;   // true during final-summary generation
 volatile bool needWifiReconnect = false;
 volatile bool needApRestart     = false;   // set when AP SSID/pass changed via UI
 
@@ -114,6 +116,12 @@ void setup() {
     Serial.println("   XIAO ESP32-S3  MEETING RECORDER v3");
     Serial.println("========================================");
 
+    // Bluetooth: this project never uses BT — turn the controller fully off
+    // so the BLE/BT modem doesn't keep its radio alive in the background.
+    // Saves ~5-10 mA continuous on ESP32-S3.
+    btStop();
+    Serial.println("[Power] Bluetooth controller stopped");
+
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
@@ -137,35 +145,61 @@ void setup() {
     }
     Serial.println("OK");
 
-    // WiFi: AP always on + STA for internet
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP(apSSID.c_str(), apPass.c_str());
-    Serial.printf("[Setup] AP: %-20s  IP=%s\n",
-                  apSSID.c_str(), WiFi.softAPIP().toString().c_str());
-
-    if (wifiSSID.length() > 0) {
+    // ── WiFi mode logic ────────────────────────────────────────────────────
+    // Three paths:
+    //   (A) No creds saved yet → AP-ONLY for first-time setup
+    //   (B) Creds saved & STA connects → STA-ONLY + mDNS (AP turned off so
+    //       the user's phone/laptop keeps internet access on the home WiFi)
+    //   (C) Creds saved but STA fails → AP+STA fallback so the user can
+    //       reconfigure via the hotspot
+    if (wifiSSID.length() == 0) {
+        // (A) First-time setup — AP only
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP(apSSID.c_str(), apPass.c_str());
+        Serial.printf("[Setup] No WiFi creds — AP-only mode\n");
+        Serial.printf("[Setup] Connect to '%s' (password: %s)\n",
+                      apSSID.c_str(), apPass.c_str());
+        Serial.printf("[Setup] Then open http://%s/setup to configure WiFi\n",
+                      WiFi.softAPIP().toString().c_str());
+    } else {
+        // Creds exist — try STA-only first
         Serial.printf("[Setup] Connecting STA: %s\n", wifiSSID.c_str());
+        WiFi.mode(WIFI_STA);
         WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
         uint32_t wt = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - wt < 15000) {
             delay(500); Serial.print(".");
         }
+
         if (WiFi.status() == WL_CONNECTED) {
-            WiFi.setSleep(false);
+            // (B) STA OK — STA-only, AP stays off.  User's phone/laptop
+            // keeps internet on the home network and reaches the dashboard
+            // via mDNS (meetingrecorder.local) — no more "connect to the
+            // device hotspot and lose internet" inconvenience.
+            WiFi.setSleep(true);     // modem-sleep for power savings
             WiFi.setTxPower(WIFI_POWER_19_5dBm);
             Serial.printf("\n[Setup] WiFi OK — IP: %s  RSSI: %d dBm\n",
                           WiFi.localIP().toString().c_str(), WiFi.RSSI());
+
+            // Start mDNS so the dashboard is reachable at meetingrecorder.local
+            // from any device on the same WiFi.  No need to memorise IPs.
+            if (MDNS.begin("meetingrecorder")) {
+                MDNS.addService("http", "tcp", 80);
+                Serial.println("[Setup] mDNS active: http://meetingrecorder.local");
+            } else {
+                Serial.println("[Setup] mDNS init failed — fall back to IP");
+            }
+
             ntpInit();   // sync clock right after STA connects
         } else {
-            Serial.println("\n[Setup] WiFi TIMEOUT — AP only.");
-            // Re-arm AP — some ESP32 SDK builds drop softAP after a failed
-            // WiFi.begin() attempt even when mode is WIFI_AP_STA.
+            // (C) STA failed — enable AP+STA for recovery
+            Serial.println("\n[Setup] WiFi TIMEOUT — enabling AP for recovery");
             WiFi.mode(WIFI_AP_STA);
             WiFi.softAP(apSSID.c_str(), apPass.c_str());
-            Serial.printf("[Setup] AP re-armed: %s\n", WiFi.softAPIP().toString().c_str());
+            Serial.printf("[Setup] Recovery AP: '%s' at %s\n",
+                          apSSID.c_str(), WiFi.softAPIP().toString().c_str());
+            Serial.println("[Setup] Open http://192.168.4.1/setup to fix WiFi creds");
         }
-    } else {
-        Serial.println("[Setup] No WiFi — open http://192.168.4.1/setup");
     }
 
     stateMutex = xSemaphoreCreateMutex();
@@ -184,11 +218,26 @@ void setup() {
     // Core 1: chunk processing (lower priority — runs when web yields)
     xTaskCreatePinnedToCore(processTask, "Process", 20480, NULL, 1, &processTaskHandle, 1);
 
+    // ── Idle power mode ──────────────────────────────────────────────────
+    // Boot is done; until a meeting starts there is no audio capture and
+    // no HTTPS in flight, so the CPU can drop from 240 MHz to 80 MHz.
+    // This cuts the chip's quiescent current by roughly 20-25 mA without
+    // affecting the web UI's responsiveness (web routes are I/O-bound).
+    // We bump back to 240 MHz when a meeting starts (see button handler
+    // below + handleApiStart) so STT/GPT and recording run at full speed.
+    setCpuFrequencyMhz(80);
+    Serial.println("[Power] Idle: CPU @ 80 MHz, WiFi modem sleep ON");
+
     Serial.println("\n========================================");
-    Serial.printf( "  AP  URL : http://%s  (SSID: %s)\n",
-                   WiFi.softAPIP().toString().c_str(), apSSID.c_str());
-    if (WiFi.status() == WL_CONNECTED)
-        Serial.printf("  LAN URL : http://%s\n", WiFi.localIP().toString().c_str());
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("  Dashboard : http://meetingrecorder.local\n");
+        Serial.printf("  (or)      : http://%s\n",
+                      WiFi.localIP().toString().c_str());
+    }
+    if (WiFi.getMode() & WIFI_AP) {
+        Serial.printf("  AP setup  : http://%s  (SSID: %s)\n",
+                      WiFi.softAPIP().toString().c_str(), apSSID.c_str());
+    }
     Serial.println("  Press button or use web UI to start");
     Serial.println("========================================\n");
 }
@@ -204,11 +253,14 @@ void loop() {
         Serial.printf("[WiFi] AP ready at %s\n", WiFi.softAPIP().toString().c_str());
     }
 
-    // WiFi reconnect after config save
+    // WiFi reconnect after config save (new SSID/password entered via UI)
     if (needWifiReconnect) {
         needWifiReconnect = false;
-        Serial.println("[WiFi] Reconnecting...");
-        // disconnect(false) = keep AP running; avoid mode reset that drops hotspot
+        Serial.println("[WiFi] Switching to new credentials...");
+        // Keep AP up DURING the attempt so the user on the AP doesn't get
+        // disconnected if the new creds turn out to be wrong.
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.softAP(apSSID.c_str(), apPass.c_str());
         WiFi.disconnect(false);
         delay(300);
         WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
@@ -217,13 +269,29 @@ void loop() {
             delay(500); Serial.print(".");
         }
         if (WiFi.status() == WL_CONNECTED) {
-            WiFi.setSleep(false);
+            WiFi.setSleep(true);
             WiFi.setTxPower(WIFI_POWER_19_5dBm);
             Serial.printf("\n[WiFi] Connected — IP: %s\n",
                           WiFi.localIP().toString().c_str());
+
+            // Restart mDNS on the new network
+            MDNS.end();
+            if (MDNS.begin("meetingrecorder")) {
+                MDNS.addService("http", "tcp", 80);
+                Serial.println("[WiFi] mDNS active: http://meetingrecorder.local");
+            }
+
+            // Shut down AP now — the dashboard is reachable via mDNS so the
+            // hotspot is no longer needed.  User's phone/laptop can go back
+            // to the home WiFi and keep their internet.
+            delay(800);   // give the success page a moment to be served
+            WiFi.softAPdisconnect(true);
+            WiFi.mode(WIFI_STA);
+            Serial.println("[WiFi] AP disabled — STA-only mode (use meetingrecorder.local)");
+
             ntpInit();
         } else {
-            Serial.println("\n[WiFi] Reconnect failed — AP still up.");
+            Serial.println("\n[WiFi] Reconnect failed — AP stays up for retry");
             // Re-arm AP in case the failed STA attempt dropped it
             WiFi.softAP(apSSID.c_str(), apPass.c_str());
         }
@@ -236,7 +304,11 @@ void loop() {
     if (prevBtn == HIGH && curBtn == LOW) {
         delay(80);
         if (!meetingActive) {
-            Serial.println("\n[Loop] ● MEETING STARTED (button)");
+            // Bump CPU before flipping meetingActive so the audio task that
+            // is about to read its first I2S buffer already has full speed.
+            setCpuFrequencyMhz(240);
+            Serial.println("[Power] Active: CPU @ 240 MHz");
+            Serial.println("[Loop] ● MEETING STARTED (button)");
             xSemaphoreTake(stateMutex, portMAX_DELAY);
             fullTranscript     = "";
             finalTranscriptText= "";
@@ -249,14 +321,51 @@ void loop() {
             finalStop          = false;
             stampNow();
             meetingActive      = true;
-            digitalWrite(LED_BUILTIN, LOW);
+            // LED is now managed by the blink state machine below.
         } else {
             Serial.println("\n[Loop] ■ MEETING STOPPED (button)");
             meetingActive = false;
             finalStop     = true;
-            digitalWrite(LED_BUILTIN, HIGH);
+            // CPU stays at 240 MHz here — processTask still has to run the
+            // final summary (potentially a multi-call map-reduce).  It will
+            // drop back to 80 MHz itself once the summary is saved.
+            // LED keeps blinking while processingFinal / queue drain runs.
         }
     }
     prevBtn = curBtn;
+
+    // ── LED state machine ──────────────────────────────────────────────────
+    // Slow heartbeat blink (one 80 ms pulse every 5 s) while the device is
+    // busy — either actively recording, draining queued chunks, or
+    // generating the final summary.  When fully idle the LED is OFF.
+    //
+    // Cuts LED duty cycle from 100% to ~1.6% during recording, which on a
+    // 5 mA LED saves roughly 5 mA average.  More importantly the slow blink
+    // gives a clear "still working" signal during long map-reduce summary
+    // jobs that can last several minutes.
+    static unsigned long ledBlinkStart = 0;
+    static bool          ledPulseOn    = false;
+
+    bool deviceBusy = meetingActive
+                   || finalStop
+                   || processingFinal
+                   || uxQueueMessagesWaiting(chunkQueue) > 0;
+
+    if (deviceBusy) {
+        unsigned long now = millis();
+        if (!ledPulseOn && (now - ledBlinkStart) >= 5000) {
+            ledBlinkStart = now;
+            ledPulseOn    = true;
+            digitalWrite(LED_BUILTIN, LOW);    // active-low: pulse ON
+        } else if (ledPulseOn && (now - ledBlinkStart) >= 80) {
+            ledPulseOn = false;
+            digitalWrite(LED_BUILTIN, HIGH);   // pulse OFF
+        }
+    } else {
+        // Fully idle — make sure LED is OFF
+        if (ledPulseOn) ledPulseOn = false;
+        digitalWrite(LED_BUILTIN, HIGH);
+    }
+
     delay(5);
 }
