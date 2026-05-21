@@ -1,5 +1,5 @@
 /*
- * web_extras.cpp  (v3 — Bug 2 fix: /api/status field names match dashboard JS)
+ * web_extras.cpp  (Bug 2 fix: /api/status field names match dashboard JS)
  * ─────────────────────────────────────────────────────────────────
  * BUG FIXED:
  *   The old /api/status returned:
@@ -19,7 +19,7 @@
  *   button always said "Start Meeting", network card was blank,
  *   summary box never updated.
  *
- *   Fix: return ALL fields the JS expects, plus the new v2
+ *   Fix: return ALL fields the JS expects, plus the extra
  *   fields so nothing breaks.
  * ─────────────────────────────────────────────────────────────────
  */
@@ -39,7 +39,7 @@ static void addCORS() {
 
 // ─────────────────────────────────────────────────────────────────
 //  GET /api/status
-//  Returns every field the dashboard JS reads, plus extra v2 info.
+//  Returns every field the dashboard JS reads, plus extra info.
 // ─────────────────────────────────────────────────────────────────
 void handleApiStatus() {
     addCORS();
@@ -71,7 +71,7 @@ void handleApiStatus() {
     String ssid       = (WiFi.status() == WL_CONNECTED) ? WiFi.SSID() : "";
     long   elapsed    = elapsedSeconds();
 
-    // State string for v2 consumers
+    // State string for dashboard consumers
     String state;
     if (meetingActive)              state = "recording";
     else if (snapChunkReady)        state = "processing";

@@ -1,11 +1,11 @@
 /*
- * api_chat.cpp  (v2 — API -1 fix + icon tokens)
+ * api_chat.cpp
  * ─────────────────────────────────────────────────────────────────
  * Sends a user question to OpenAI GPT with the meeting summary
  * and (up to 3 KB of) transcript as grounding context.
  * Uses gpt-4o-mini for fast, affordable responses.
  *
- * FIXES (v2):
+ * Resilience fixes:
  *   • Added http.setReuse(false) — prevents connection-state
  *     corruption that caused HTTP -1 on back-to-back requests.
  *   • Raised timeout to 30 s (matches api.cpp) — reduces -1 on
