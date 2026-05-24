@@ -23,23 +23,61 @@
 #include "SD.h"
 
 // ─── deleteDirRecursive ───────────────────────────────────────────────────────
+// CRITICAL: never call SD.remove() / SD.rmdir() / recurse while a parent
+// directory handle is still open.  The FAT layer can leave the card in
+// an inconsistent state — the bug surfaced as "SD init FAILED" forever
+// on the next boot after a factory reset.
+//
+// Two-phase, batched approach:
+//   Phase 1 — open the dir, scan up to BATCH_SIZE entries into a local
+//             array, close the dir handle.  Remember the first subdir
+//             (if any) for later recursion.
+//   Phase 2 — with the dir handle CLOSED, SD.remove() every collected
+//             file path, then recurse into the saved subdir.
+//   Repeat   until the dir reports empty, then SD.rmdir() it.
 void deleteDirRecursive(const String& path) {
-    File dir = SD.open(path.c_str());
-    if (!dir) return;
+    const int BATCH_SIZE = 30;
 
-    File entry = dir.openNextFile();
-    while (entry) {
-        String entryPath = path + "/" + String(entry.name());
-        if (entry.isDirectory()) {
+    while (true) {
+        File dir = SD.open(path.c_str());
+        if (!dir) return;
+
+        String batch[BATCH_SIZE];
+        int    fileCount   = 0;
+        String firstSubdir;     // only one subdir recursed per pass — safer
+
+        File entry = dir.openNextFile();
+        while (entry && fileCount < BATCH_SIZE) {
+            String n = entry.name();
+            int slash = n.lastIndexOf('/');
+            if (slash >= 0) n = n.substring(slash + 1);
+            String full = path + "/" + n;
+
+            if (entry.isDirectory()) {
+                if (firstSubdir.length() == 0) firstSubdir = full;
+            } else {
+                batch[fileCount++] = full;
+            }
             entry.close();
-            deleteDirRecursive(entryPath);
-        } else {
-            entry.close();
-            SD.remove(entryPath.c_str());
+            entry = dir.openNextFile();
         }
-        entry = dir.openNextFile();
+        dir.close();    // ← critical: close iterator BEFORE any deletes
+
+        // Delete the files in this batch
+        for (int i = 0; i < fileCount; i++) {
+            SD.remove(batch[i].c_str());
+        }
+
+        // Recurse into one subdirectory per pass (after parent is closed)
+        if (firstSubdir.length() > 0) {
+            deleteDirRecursive(firstSubdir);
+        }
+
+        // Loop again to pick up either the next batch of files in this
+        // dir, or the next subdir — until both are exhausted.
+        if (fileCount == 0 && firstSubdir.length() == 0) break;
     }
-    dir.close();
+
     SD.rmdir(path.c_str());
     Serial.printf("[SD] Deleted: %s\n", path.c_str());
 }
