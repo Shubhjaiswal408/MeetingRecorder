@@ -225,3 +225,13 @@ A per-file reference is in [FILES.md](FILES.md).
 - **User starts the next meeting mid-finalisation:** the CPU drop at the
   end of the final-summary block is guarded by `!meetingActive`, so the
   new recording never sees CPU drop under it.
+
+
+
+
+Tools → Board → ESP32S3 Dev Module
+Tools → PSRAM → "OPI PSRAM"           ← MUST
+Tools → Flash Size → 16MB (128Mb)
+Tools → Partition Scheme → 16M Flash (3MB APP/9.9MB FATFS)
+Tools → USB CDC On Boot → Enabled     ← Serial debug ke liye
+Tools → USB Mode → Hardware CDC and JTAG
