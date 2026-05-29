@@ -43,6 +43,23 @@ String generateSegmentSummary(const String& transcriptSegment,
 // final meeting summary with the standard 5-section structure.
 String synthesizeFinalSummary(const String& combinedSegmentSummaries);
 
+// ─── 2nd-pass quality review ────────────────────────────────────────────────
+// Takes the draft summary + the original transcript and asks GPT to act as
+// a critic: find ASR mishearings, boilerplate headings, contradictions,
+// hallucinations and missed topics — then return the fully corrected
+// summary in the same format.
+String reviewAndFixSummary(const String& transcript, const String& draftSummary);
+
+// ─── 3rd-pass fact-check ────────────────────────────────────────────────────
+// Final verification pass — focused specifically on the high-impact issues
+// that the writer + reviewer tend to miss:
+//   1. Proper nouns that don't fit the meeting's geography / industry
+//   2. Boilerplate headings ('Introduction', 'Closing Remarks', etc.)
+//   3. Product / model names slightly mangled
+// Takes the reviewed summary + transcript, runs one more sweep, returns
+// the polished final.
+String factCheckSummary(const String& transcript, const String& reviewedSummary);
+
 // ─── JSON string escape ───────────────────────────────────────────────────────
 // Escapes a String so it is safe to embed in a JSON value.
 String jsonEscape(const String& s);

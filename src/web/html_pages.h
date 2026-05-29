@@ -468,11 +468,18 @@ body{height:100%;height:100dvh;overflow:hidden;-webkit-overflow-scrolling:touch;
     <div class="tab-head"><span class="tab-title">Settings</span></div>
 
     <div class="s-sec">
-      <div class="s-lbl">WiFi Network</div>
+      <div class="s-lbl" style="display:flex;justify-content:space-between;align-items:center">
+        <span>WiFi Network</span>
+        <button class="btn btn-s" id="wifiScanBtn" onclick="scanWifi()" style="width:auto;padding:4px 10px;font-size:11px;line-height:1">
+          <svg style="width:11px;height:11px;vertical-align:middle;display:inline-block;margin-right:4px" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 6.5a10 10 0 0114 0"/><path d="M3.5 9a6.5 6.5 0 019 0"/><path d="M6 11.5a3 3 0 014 0"/><circle cx="8" cy="13.5" r=".6" fill="currentColor"/></svg>
+          Scan
+        </button>
+      </div>
       <div class="fgrp">
         <div class="frow"><div class="flbl">SSID</div><input class="finp" id="cSSID" type="text" placeholder="Network name"></div>
         <div class="frow"><div class="flbl">Password</div><input class="finp" id="cPass" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"></div>
       </div>
+      <div id="wifiList" style="margin-top:8px;display:none;max-height:180px;overflow-y:auto;border:1px solid var(--b1);border-radius:var(--rsm);background:var(--card)"></div>
     </div>
 
     <div class="s-sec">
@@ -546,21 +553,11 @@ body{height:100%;height:100dvh;overflow:hidden;-webkit-overflow-scrolling:touch;
       <div class="s-lbl" style="color:var(--red)">Danger Zone</div>
 
       <div style="font-size:12px;color:var(--t2);line-height:1.55;margin-bottom:8px">
-        <strong style="color:var(--t1)">Reset Credentials Only</strong> &mdash; clears WiFi credentials and API keys, but <strong>keeps all your saved meetings</strong>. The device reboots into setup mode so you can configure new credentials. Use this when switching networks or changing keys.
+        <strong style="color:var(--t1)">Reset Credentials</strong> &mdash; clears WiFi credentials and API keys, but <strong>keeps all your saved meetings</strong>. The device reboots into setup mode so you can configure new credentials. Use this when switching networks or changing keys.
       </div>
-      <button class="btn btn-s" onclick="resetCreds()" style="width:auto;margin-bottom:14px">
+      <button class="btn btn-s" onclick="resetCreds()" style="width:auto">
         <svg style="width:13px;height:13px;vertical-align:middle;display:inline-block;flex-shrink:0;margin-right:5px" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 8a5.5 5.5 0 019.4-3.9"/><polyline points="12 2 12 5 9 5"/><path d="M13.5 8a5.5 5.5 0 01-9.4 3.9"/><polyline points="4 14 4 11 7 11"/></svg>
-        Reset Credentials Only
-      </button>
-
-      <div style="height:1px;background:rgba(248,81,73,0.18);margin:6px 0 14px"></div>
-
-      <div style="font-size:12px;color:var(--t2);line-height:1.55;margin-bottom:10px">
-        <strong style="color:var(--red)">Factory Reset</strong> &mdash; wipes <strong>everything</strong>: all saved meetings (transcripts, audio, summaries) <strong>and</strong> all credentials. The device reboots into setup mode &mdash; you will need to configure everything from scratch.
-      </div>
-      <button class="btn btn-d" onclick="factoryReset()" style="width:auto">
-        <svg style="width:13px;height:13px;vertical-align:middle;display:inline-block;flex-shrink:0;margin-right:5px" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 2L14.5 13.5H1.5L8 2z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12" r=".6" fill="currentColor" stroke="none"/></svg>
-        Factory Reset
+        Reset Credentials
       </button>
     </div>
   </div>
@@ -596,7 +593,7 @@ body{height:100%;height:100dvh;overflow:hidden;-webkit-overflow-scrolling:touch;
 var tab='dashboard', prevState='', meetingStart=null, durTimer=null,
     chatHist=[], summaryReady=false, recBusy=false,
     histLoaded=false, histItems=[],
-    chatMode='current', histCtxSummary='', histCtxName='';
+    chatMode='current', histCtxSummary='', histCtxName='', histCtxDir='';
 
 /* ── Simple markdown → HTML renderer ── */
 function renderMd(text){
@@ -769,7 +766,7 @@ function updateUI(d){
 
   /* reset state when new recording starts */
   if(state==='recording'&&prevState!==''&&prevState!=='recording'&&summaryReady){
-    summaryReady=false;chatHist=[];chatMode='current';histCtxSummary='';histCtxName='';
+    summaryReady=false;chatHist=[];chatMode='current';histCtxSummary='';histCtxName='';histCtxDir='';
     var nb=document.getElementById('chatNavBtn');
     nb.classList.add('locked');
     if(!document.getElementById('chatLock')){
@@ -931,6 +928,7 @@ function askHistAI(i){
   if(!histItems[i]||!histItems[i].summary) return;
   var m=histItems[i];
   histCtxSummary=m.summary;
+  histCtxDir=m.dir||'';      /* used by sendChat to load full_transcript.txt */
   histCtxName=(m.dir||'meeting').replace(/^meeting_/,'').replace(/_/g,' ');
   chatMode='history';
   chatHist=[];
@@ -953,7 +951,7 @@ function askHistAI(i){
 }
 
 function clearHistCtx(){
-  chatMode='current';histCtxSummary='';histCtxName='';chatHist=[];
+  chatMode='current';histCtxSummary='';histCtxName='';histCtxDir='';chatHist=[];
   document.getElementById('chatCtxBanner').style.display='none';
   if(!summaryReady){
     var nb=document.getElementById('chatNavBtn');
@@ -971,9 +969,9 @@ function clearHistCtx(){
   }
 }
 
-/* ── Reset Credentials Only ─────────────── */
+/* ── Reset Credentials ─────────────── */
 async function resetCreds(){
-  if(!confirm('Reset Credentials Only\n\nThis will clear:\n• WiFi credentials\n• ElevenLabs API key\n• OpenAI API key\n\nIt will NOT touch your saved meetings.\n\nDevice will reboot into setup mode. Continue?')) return;
+  if(!confirm('Reset Credentials\n\nThis will clear:\n• WiFi credentials\n• ElevenLabs API key\n• OpenAI API key\n\nIt will NOT touch your saved meetings.\n\nDevice will reboot into setup mode. Continue?')) return;
 
   toast('Clearing credentials&#8230;','info');
   try{
@@ -988,33 +986,6 @@ async function resetCreds(){
   }catch(e){
     /* Fetch will fail mid-reboot — that's the success signal */
     document.body.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,system-ui,sans-serif;color:#cdd6f4;background:#11111b;text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:20px">↺</div><div style="font-size:22px;font-weight:600;margin-bottom:12px">Credentials Cleared</div><div style="font-size:14px;color:#9399b2;max-width:400px;line-height:1.6">Your saved meetings are intact.<br><br>The device is rebooting into setup mode &mdash; connect to the <strong style="color:#89b4fa">MeetingRecorder</strong> hotspot and open <strong style="color:#89b4fa">http://192.168.4.1/setup</strong> to re-enter WiFi and API keys.</div></div>';
-  }
-}
-
-/* ── Factory Reset ─────────────────────── */
-async function factoryReset(){
-  if(!confirm('⚠️ FACTORY RESET\n\nThis will permanently delete:\n• All meetings (transcripts, audio, summaries)\n• WiFi credentials\n• API keys (ElevenLabs, OpenAI)\n• Hotspot (AP) settings\n\nThe device will reboot into setup mode.\n\nContinue?')) return;
-
-  // Second confirmation — type to confirm
-  var typed=prompt('Type RESET (in capitals) to confirm factory reset:');
-  if(typed!=='RESET'){
-    toast('Factory reset cancelled','info');
-    return;
-  }
-
-  toast('Wiping device&#8230;','info');
-  try{
-    var r=await fetch('/api/factory-reset',{method:'POST'});
-    var data;
-    try{data=await r.json()}catch(je){data={ok:r.ok}}
-    if(data.ok){
-      document.body.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,system-ui,sans-serif;color:#cdd6f4;background:#11111b;text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:20px">↺</div><div style="font-size:22px;font-weight:600;margin-bottom:12px">Device Reset Complete</div><div style="font-size:14px;color:#9399b2;max-width:400px;line-height:1.6">The device is rebooting and will come up in setup mode.<br><br>Look for the WiFi network <strong style="color:#89b4fa">MeetingRecorder</strong> on your phone, then open <strong style="color:#89b4fa">http://192.168.4.1/setup</strong> to reconfigure.</div></div>';
-    } else {
-      toast('Factory reset failed: '+(data.error||'server error'),'err');
-    }
-  }catch(e){
-    // After reboot, fetch will fail — that's actually the success signal.
-    document.body.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,system-ui,sans-serif;color:#cdd6f4;background:#11111b;text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:20px">↺</div><div style="font-size:22px;font-weight:600;margin-bottom:12px">Device Reset Complete</div><div style="font-size:14px;color:#9399b2;max-width:400px;line-height:1.6">The device is rebooting and will come up in setup mode.<br><br>Look for the WiFi network <strong style="color:#89b4fa">MeetingRecorder</strong> on your phone, then open <strong style="color:#89b4fa">http://192.168.4.1/setup</strong> to reconfigure.</div></div>';
   }
 }
 
@@ -1107,19 +1078,88 @@ async function sendChat(){
   btn.disabled=true;inp.value='';inp.style.height='20px';
   addMsg('user',escHtml(q));showThink();
   chatHist.push({role:'user',content:q});
+
+  /* 3-minute hard timeout — large transcripts can take 60-90 s on the
+     device.  AbortController lets us cancel cleanly if it really hangs. */
+  var ctrl=new AbortController();
+  var killT=setTimeout(function(){ctrl.abort()},180000);
+
   try{
     var payload={question:q,history:chatHist.slice(-6)};
-    /* include context override for history meetings */
-    if(chatMode==='history'&&histCtxSummary) payload.context=histCtxSummary;
-    var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(chatMode==='history'&&histCtxSummary){
+      payload.context=histCtxSummary;
+      if(histCtxDir) payload.dir=histCtxDir;
+    }
+    var r=await fetch('/api/chat',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload),
+      signal:ctrl.signal
+    });
+    clearTimeout(killT);
+    if(!r.ok){throw new Error('HTTP '+r.status)}
     var data=await r.json();
     rmThink();
-    var ans=data.answer||'Sorry, no response was generated.';
+    var ans=(data&&data.answer)?data.answer:'No response generated.';
     addMsg('ai',renderAns(ans));
     chatHist.push({role:'assistant',content:ans});
-  }catch(e){rmThink();addMsg('ai',renderAns('[ERR] Connection error — please try again.'))}
+  }catch(e){
+    clearTimeout(killT);
+    rmThink();
+    var msg=e.name==='AbortError'
+      ? '[ERR] Request timed out after 3 min — the device is still processing.  Try again in a few seconds.'
+      : '[ERR] Connection error — please try again.';
+    addMsg('ai',renderAns(msg));
+  }
   btn.disabled=false;
   document.getElementById('chatInp').focus();
+}
+
+/* ── WiFi Scan ──────────────────────── */
+async function scanWifi(){
+  var btn=document.getElementById('wifiScanBtn');
+  var list=document.getElementById('wifiList');
+  btn.disabled=true;btn.innerHTML='<span style="opacity:.7">Scanning...</span>';
+  list.style.display='block';
+  list.innerHTML='<div style="padding:14px;text-align:center;color:var(--t2);font-size:12px">Scanning for networks&hellip; (~3 s)</div>';
+
+  var ctrl=new AbortController();
+  var killT=setTimeout(function(){ctrl.abort()},15000);
+  try{
+    var r=await fetch('/api/wifi/scan',{signal:ctrl.signal});
+    clearTimeout(killT);
+    var nets=await r.json();
+    if(!nets||!nets.length){
+      list.innerHTML='<div style="padding:14px;text-align:center;color:var(--t2);font-size:12px">No networks found.  Try scanning again, or type SSID manually.</div>';
+    } else {
+      /* Sort by signal strength (strongest first) */
+      nets.sort(function(a,b){return b.rssi-a.rssi});
+      var html='';
+      nets.forEach(function(n){
+        var lockIcon=n.sec>0
+          ? '<svg style="width:11px;height:11px;vertical-align:middle;margin-right:4px;opacity:.7" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 016 0v2"/></svg>'
+          : '';
+        var barCount=n.rssi>-55?4:n.rssi>-65?3:n.rssi>-75?2:1;
+        var bars='<span style="display:inline-block;width:18px;letter-spacing:1px;color:var(--t1);font-size:10px">'
+                +'█'.repeat(barCount)+'<span style="opacity:.25">'+'█'.repeat(4-barCount)+'</span></span>';
+        html+='<div onclick="pickWifi('+JSON.stringify(n.ssid)+')" style="padding:9px 12px;border-bottom:1px solid var(--b1);cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-size:13px" onmouseover="this.style.background=\'var(--card2)\'" onmouseout="this.style.background=\'\'">'
+            + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+lockIcon+escHtml(n.ssid)+'</span>'
+            + '<span style="color:var(--t2);font-size:11px;margin-left:8px">'+n.rssi+' dBm '+bars+'</span>'
+            + '</div>';
+      });
+      list.innerHTML=html;
+    }
+  }catch(e){
+    clearTimeout(killT);
+    list.innerHTML='<div style="padding:14px;text-align:center;color:var(--red);font-size:12px">Scan failed.  Type SSID manually.</div>';
+  }
+  btn.disabled=false;
+  btn.innerHTML='<svg style="width:11px;height:11px;vertical-align:middle;display:inline-block;margin-right:4px" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 6.5a10 10 0 0114 0"/><path d="M3.5 9a6.5 6.5 0 019 0"/><path d="M6 11.5a3 3 0 014 0"/><circle cx="8" cy="13.5" r=".6" fill="currentColor"/></svg> Scan';
+}
+function pickWifi(ssid){
+  document.getElementById('cSSID').value=ssid;
+  document.getElementById('wifiList').style.display='none';
+  document.getElementById('cPass').focus();
 }
 
 /* ── Settings ───────────────────────── */
