@@ -121,6 +121,19 @@ void setup() {
     Serial.println("   XIAO ESP32-S3  MEETING RECORDER");
     Serial.println("========================================");
 
+    // ─── PSRAM check — required for full-quality long-meeting handling ────
+    if (psramFound()) {
+        size_t psSz   = ESP.getPsramSize();
+        size_t psFree = ESP.getFreePsram();
+        Serial.printf("[MEM] PSRAM detected: %u bytes total, %u bytes free\n",
+                      (unsigned)psSz, (unsigned)psFree);
+    } else {
+        Serial.println("[MEM] !!! WARNING: PSRAM not detected — set Tools > PSRAM > 'OPI PSRAM' and re-flash. !!!");
+        Serial.println("[MEM] !!! Long meetings will be limited to ~110 KB transcript without PSRAM. !!!");
+    }
+    Serial.printf("[MEM] Internal heap free: %u bytes\n",
+                  (unsigned)ESP.getFreeHeap());
+
     // Bluetooth: this project never uses BT — turn the controller fully off
     // so the BLE/BT modem doesn't keep its radio alive in the background.
     // Saves ~5-10 mA continuous on ESP32-S3.

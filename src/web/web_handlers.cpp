@@ -428,6 +428,37 @@ static void handleApiResetCredentials() {
     ESP.restart();
 }
 
+// ─── GET /api/wifi/scan ─────────────────────────────────────────────────────
+// Returns a JSON array of nearby WiFi networks so the setup page can show
+// a tappable list instead of making the user type the SSID by hand.
+//   [{"ssid":"Home","rssi":-45,"sec":3},{"ssid":"Office",...}, ...]
+// "sec" is the encryption type as reported by WiFi.encryptionType().
+//
+// Scan blocks for ~2-4 s — that's why the frontend shows a spinner.
+static void handleApiWifiScan() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Cache-Control", "no-cache");
+
+    Serial.println("[WifiScan] starting scan...");
+    int n = WiFi.scanNetworks(false /*async*/, true /*show_hidden*/);
+    Serial.printf("[WifiScan] found %d networks\n", n);
+
+    String out = "[";
+    bool first = true;
+    for (int i = 0; i < n; i++) {
+        String ssid = WiFi.SSID(i);
+        if (ssid.length() == 0) continue;     // hide truly hidden APs
+        if (!first) out += ",";
+        out += "{\"ssid\":\"" + jsonEscape(ssid) + "\","
+               "\"rssi\":" + String(WiFi.RSSI(i)) + ","
+               "\"sec\":" + String((int)WiFi.encryptionType(i)) + "}";
+        first = false;
+    }
+    out += "]";
+    WiFi.scanDelete();   // free the result list
+    server.send(200, "application/json", out);
+}
+
 // ─── 404 ─────────────────────────────────────────────────────────────────────
 static void handle404() {
     server.send(404, "text/plain", "Not found");
@@ -445,6 +476,7 @@ void startWebServer() {
     server.on("/api/history/regenerate", HTTP_POST, handleApiHistoryRegenerate);
     server.on("/api/factory-reset",      HTTP_POST, handleApiFactoryReset);
     server.on("/api/reset-credentials",  HTTP_POST, handleApiResetCredentials);
+    server.on("/api/wifi/scan",          HTTP_GET,  handleApiWifiScan);
 
     // Extra routes from web_extras
     server.on("/api/status",  HTTP_GET,  handleApiStatus);

@@ -167,15 +167,34 @@ void handleApiChat() {
         }
     }
 
+    // Extract "dir" — passed by the History tab so the chat can read
+    // full_transcript.txt from that meeting's directory and answer
+    // questions from real spoken content (not just the summary).
+    String dirArg = "";
+    int dxi = body.indexOf("\"dir\"");
+    if (dxi >= 0) {
+        int ds = body.indexOf('"', dxi + 5) + 1;
+        if (ds > 0) {
+            int de = ds;
+            while (de < (int)body.length()) {
+                if (body[de] == '\\') { de += 2; continue; }
+                if (body[de] == '"') break;
+                de++;
+            }
+            dirArg = body.substring(ds, de);
+        }
+    }
+
     if (question.isEmpty()) {
         server.send(400, "application/json", "{\"error\":\"Empty question\"}");
         return;
     }
 
-    Serial.printf("[CHAT] Question: %s  (context: %d chars)\n",
-                  question.c_str(), contextOverride.length());
+    Serial.printf("[CHAT] Question: %s  (context: %d chars, dir: %s)\n",
+                  question.c_str(), contextOverride.length(),
+                  dirArg.length() ? dirArg.c_str() : "(current)");
 
-    String answer = askAboutSummary(question, historyJson, contextOverride);
+    String answer = askAboutSummary(question, historyJson, contextOverride, dirArg);
     server.send(200, "application/json",
                 "{\"answer\":\"" + jsonEscape(answer) + "\"}");
 }
