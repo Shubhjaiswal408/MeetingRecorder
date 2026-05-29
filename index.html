@@ -5,204 +5,189 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Realtime GPS Tracker Firmware Installer</title>
+<title>AI Meeting Recorder Firmware Installer</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <script type="module"
 src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module">
 </script>
 
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
 <style>
 
 :root{
---bg:#0f172a;
---card:#111827;
---border:#1f2937;
---text:#f8fafc;
---muted:#94a3b8;
---accent1:#2563eb;
---accent2:#3b82f6;
+    --bg:#0f172a;
+    --card:#111827;
+    --card-border:#1f2937;
+    --text:#f8fafc;
+    --muted:#94a3b8;
+    --accent1:#2563eb;
+    --accent2:#3b82f6;
 }
 
 *{
-margin:0;
-padding:0;
-box-sizing:border-box;
-font-family:'Inter',sans-serif;
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
 }
 
 body{
-background:linear-gradient(180deg,#0f172a,#111827);
-color:var(--text);
-min-height:100vh;
-padding:40px 20px;
+    font-family:'Inter',sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    line-height:1.6;
 }
 
 .container{
-max-width:900px;
-margin:auto;
+    max-width:1000px;
+    margin:auto;
+    padding:24px;
 }
 
 .hero{
-text-align:center;
-margin-bottom:40px;
+    text-align:center;
+    padding:60px 20px;
 }
 
 .hero h1{
-font-size:2.8rem;
-font-weight:700;
-margin-bottom:12px;
+    font-size:2.8rem;
+    margin-bottom:12px;
 }
 
 .hero p{
-color:var(--muted);
-font-size:1.1rem;
+    color:var(--muted);
+    max-width:700px;
+    margin:auto;
 }
 
 .card{
-background:var(--card);
-border:1px solid var(--border);
-border-radius:16px;
-padding:28px;
-margin-bottom:24px;
+    background:var(--card);
+    border:1px solid var(--card-border);
+    border-radius:16px;
+    padding:24px;
+    margin-bottom:24px;
 }
 
 .card h2{
-margin-bottom:16px;
-font-size:1.3rem;
-}
-
-.card p{
-line-height:1.7;
-color:#d1d5db;
+    margin-bottom:15px;
+    font-size:1.3rem;
 }
 
 ul{
-padding-left:20px;
-line-height:1.8;
+    padding-left:20px;
 }
 
-.warning{
-border-left:4px solid #f59e0b;
+li{
+    margin-bottom:8px;
 }
 
-.footer{
-text-align:center;
-margin-top:30px;
-color:var(--muted);
+.install-section{
+    text-align:center;
+    margin:40px 0;
 }
 
-.button-row{
-margin-top:20px;
-display:flex;
-gap:12px;
-flex-wrap:wrap;
-}
+/* ESP WEB TOOLS BUTTON STYLING */
 
-a.btn{
-display:inline-flex;
-align-items:center;
-justify-content:center;
-padding:12px 24px;
-border-radius:12px;
-text-decoration:none;
-font-weight:600;
-transition:.25s ease;
-}
+esp-web-install-button::part(button) {
 
-.btn-primary{
-background:linear-gradient(
-135deg,
-var(--accent1),
-var(--accent2)
-);
-color:white;
-}
+    background:linear-gradient(
+        135deg,
+        var(--accent1),
+        var(--accent2)
+    );
 
-.btn-primary:hover{
-transform:translateY(-2px);
-}
+    border:none;
 
-esp-web-install-button::part(button){
-background:linear-gradient(
-135deg,
-#2563eb,
-#3b82f6
-);
+    color:white;
 
-color:white;
-border:none;
-border-radius:12px;
-padding:14px 26px;
-font-size:16px;
-font-weight:600;
-cursor:pointer;
+    padding:16px 34px;
 
-box-shadow:
-0 4px 12px rgba(37,99,235,.25);
+    border-radius:12px;
 
-transition:all .2s ease;
+    font-size:16px;
+
+    font-weight:600;
+
+    cursor:pointer;
+
+    transition:all .25s ease;
+
+    box-shadow:
+    0 4px 12px rgba(37,99,235,.25);
 }
 
 esp-web-install-button::part(button):hover{
-transform:translateY(-2px);
+
+    transform:translateY(-2px);
+
+    box-shadow:
+    0 8px 18px rgba(37,99,235,.30);
+}
+
+.video-btn{
+
+    display:inline-block;
+
+    margin-top:18px;
+
+    text-decoration:none;
+
+    color:white;
+
+    background:#1f2937;
+
+    padding:12px 20px;
+
+    border-radius:10px;
+
+    transition:.25s;
+}
+
+.video-btn:hover{
+    background:#374151;
+}
+
+.warning{
+    border-left:4px solid #f59e0b;
+}
+
+.footer{
+    text-align:center;
+    color:var(--muted);
+    padding:30px;
 }
 
 @media(max-width:768px){
 
 .hero h1{
-font-size:2rem;
+    font-size:2rem;
 }
 
-.card{
-padding:20px;
+.container{
+    padding:16px;
 }
 
 }
 
 </style>
+
 </head>
 
 <body>
 
 <div class="container">
 
-<div class="hero">
-<h1>Realtime GPS Tracker</h1>
+<section class="hero">
+
+<h1>AI Meeting Recorder</h1>
 
 <p>
-Browser-Based Firmware Installer
+Wireless AI-powered Meeting Recorder Firmware Installer
 for XIAO ESP32-S3 Sense
 </p>
-</div>
 
-<div class="card">
-
-<h2>Flash Firmware</h2>
-
-<p>
-Connect your XIAO ESP32-S3 Sense via USB and click the button below.
-Chrome or Edge is required.
-</p>
-
-<br>
-
-<esp-web-install-button
-manifest="manifest.json">
-</esp-web-install-button>
-
-<div class="button-row">
-
-<a href="https://youtube.com/"
-class="btn btn-primary"
-target="_blank">
-Watch Tutorial
-</a>
-
-</div>
-
-</div>
+</section>
 
 <div class="card">
 
@@ -211,8 +196,32 @@ Watch Tutorial
 <ul>
 <li>XIAO ESP32-S3 Sense</li>
 <li>ESP32-S3 Chip Family</li>
-<li>USB Data Cable Required</li>
+<li>Chrome & Edge Browser</li>
 </ul>
+
+</div>
+
+<div class="card install-section">
+
+<h2>Install Firmware</h2>
+
+<p>
+Connect your device via USB and click below.
+</p>
+
+<br>
+
+<esp-web-install-button manifest="manifest.json">
+</esp-web-install-button>
+
+<br>
+
+<a
+href="https://youtube.com"
+target="_blank"
+class="video-btn">
+Watch Tutorial
+</a>
 
 </div>
 
@@ -220,19 +229,21 @@ Watch Tutorial
 
 <h2>Installation Steps</h2>
 
-<ol style="padding-left:20px;line-height:1.8">
+<ol>
 
-<li>Connect ESP32-S3 via USB.</li>
+<li>Connect XIAO ESP32-S3 Sense using USB.</li>
 
-<li>Open Chrome or Edge.</li>
+<li>Open Chrome or Microsoft Edge.</li>
 
 <li>Click Flash Firmware.</li>
 
 <li>Select Serial Port.</li>
 
-<li>Wait until flashing completes.</li>
+<li>Allow installation.</li>
 
-<li>Board will reboot automatically.</li>
+<li>Wait for flashing to complete.</li>
+
+<li>Device reboots automatically.</li>
 
 </ol>
 
@@ -240,23 +251,40 @@ Watch Tutorial
 
 <div class="card warning">
 
+<h2>Important Notes</h2>
+
+<ul>
+<li>Use a data USB cable.</li>
+<li>Close Arduino IDE before flashing.</li>
+<li>Use latest Chrome or Edge.</li>
+<li>Keep device powered during installation.</li>
+</ul>
+
+</div>
+
+<div class="card">
+
 <h2>Troubleshooting</h2>
 
 <ul>
-<li>Use a USB DATA cable.</li>
-<li>Try another USB port.</li>
-<li>Close Arduino IDE.</li>
-<li>Disconnect serial monitors.</li>
-<li>Enter bootloader mode manually.</li>
-<li>Refresh browser and retry.</li>
+
+<li>Board not detected → Try another USB cable.</li>
+
+<li>Serial port missing → Install USB drivers.</li>
+
+<li>Failed to connect → Enter bootloader mode.</li>
+
+<li>Manifest error → Verify file paths.</li>
+
+<li>GitHub 404 → Check Pages deployment.</li>
+
 </ul>
 
 </div>
 
 <div class="footer">
 
-Realtime GPS Tracker<br>
-Created by techiesms
+techiesms © 2026
 
 </div>
 

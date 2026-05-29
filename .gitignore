@@ -3,7 +3,6 @@
 
 # Arduino IDE artifacts (usually elsewhere, but defensive)
 build/
-*.bin
 *.elf
 *.map
 *.hex

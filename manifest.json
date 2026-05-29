@@ -1,8 +1,6 @@
 {
-  "name": "Realtime GPS Tracker",
+  "name": "AI Meeting Recorder",
   "version": "1.0.0",
-  "home_assistant_domain": "",
-  "funding_url": "",
   "new_install_prompt_erase": true,
 
   "builds": [
