@@ -1,0 +1,32 @@
+{
+  "name": "Realtime GPS Tracker",
+  "version": "1.0.0",
+  "home_assistant_domain": "",
+  "funding_url": "",
+  "new_install_prompt_erase": true,
+
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+
+      "parts": [
+        {
+          "path": "firmware/MeetingRecorder.ino.bootloader.bin",
+          "offset": "0x0"
+        },
+        {
+          "path": "firmware/MeetingRecorder.ino.partitions.bin",
+          "offset": "0x8000"
+        },
+        {
+          "path": "firmware/boot_app0.bin",
+          "offset": "0xe000"
+        },
+        {
+          "path": "firmware/MeetingRecorder.ino.bin",
+          "offset": "0x10000"
+        }
+      ]
+    }
+  ]
+}
