@@ -5,7 +5,7 @@
 
 A standalone meeting recorder built on the **Seeed XIAO ESP32-S3 Sense**. Press one button, talk freely, and walk away with an accurate transcript, an AI-generated multi-section summary, and the ability to chat with the meeting after it ends. No phone required. No subscription required. Just hardware, WiFi, and a microSD card.
 
-> Built and curated by **[Shubh](https://github.com/Shubhjaiswal408)** · Showcased on **[techiesms](https://www.youtube.com/@techiesms)**
+> Built and created by **[Shubh](https://github.com/Shubhjaiswal408)** · Showcased on **[techiesms](https://www.youtube.com/@techiesms)**
 
 ---
 
